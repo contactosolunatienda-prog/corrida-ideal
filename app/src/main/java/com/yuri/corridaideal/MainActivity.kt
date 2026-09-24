@@ -29,6 +29,8 @@ class MainActivity : Activity() {
     private lateinit var result: TextView
     private lateinit var obdStatus: TextView
     private lateinit var obdSpinner: Spinner
+    private lateinit var screenStatus: TextView
+    private var waitingOverlayPermission = false
     private val obdAddresses = mutableListOf<String>()
 
     private val stateListener: (LiveSnapshot) -> Unit = { snap ->
@@ -39,6 +41,9 @@ class MainActivity : Activity() {
                 snap.obdSpeedKmh?.let { append(" • %.0f km/h".format(it)) }
             }
             snap.analysis?.let { result.text = formatAnalysis(it) }
+            if (::screenStatus.isInitialized) {
+                screenStatus.text = snap.captureStatus + if (snap.captureConfidence > 0) " • leitura ${snap.captureConfidence}%" else ""
+            }
         }
     }
 
@@ -55,6 +60,10 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         populateBondedDevices()
+        if (waitingOverlayPermission && Settings.canDrawOverlays(this)) {
+            waitingOverlayPermission = false
+            startOverlay()
+        }
     }
 
     override fun onDestroy() {
@@ -115,25 +124,37 @@ class MainActivity : Activity() {
         }
         root.addView(save, full())
 
-        root.addView(section("PAINEL FLUTUANTE + VOZ"))
+        root.addView(section("BOLHA FLUTUANTE + LEITURA DA UBER"))
         root.addView(TextView(this).apply {
-            text = "Exemplos: “corrida 27 vírgula 50, 3 até buscar, 12 de viagem, 28 minutos”; “consumo 13 vírgula 5”; “como está a corrida?”"
+            text = "Uso principal: ative a bolha, abra a Uber e, quando chegar a oferta, toque uma vez em 📸. Na primeira vez o Android pedirá autorização para compartilhar a tela/app. Depois a leitura usa OCR no próprio celular e calcula a corrida automaticamente."
             textSize = 13f
             setPadding(0,0,0,dp(8))
         })
 
         val overlayRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val startOverlay = Button(this).apply {
-            text = "ATIVAR PAINEL"
+            text = "ATIVAR BOLHA 📸"
             setOnClickListener { startOverlay() }
         }
-        val voice = Button(this).apply {
-            text = "🎙 FALAR"
-            setOnClickListener { sendVoiceAction() }
+        val screen = Button(this).apply {
+            text = "ATIVAR LEITURA"
+            setOnClickListener { startActivity(Intent(this@MainActivity, CapturePermissionActivity::class.java)) }
         }
         overlayRow.addView(startOverlay, LinearLayout.LayoutParams(0, dp(52), 1f))
-        overlayRow.addView(voice, LinearLayout.LayoutParams(0, dp(52), 1f))
+        overlayRow.addView(screen, LinearLayout.LayoutParams(0, dp(52), 1f))
         root.addView(overlayRow)
+
+        screenStatus = TextView(this).apply {
+            text = "Leitura de tela desligada"
+            textSize = 13f
+            setPadding(0, dp(6), 0, dp(6))
+        }
+        root.addView(screenStatus)
+
+        root.addView(TextView(this).apply {
+            text = "Bolha: toque = ler oferta • segure = abrir detalhes • arraste = mover. O modo AUTO fica dentro dos detalhes e é experimental. Voz fica como alternativa para consumo, limite e status."
+            textSize = 12f
+        })
 
         val clearVoice = Button(this).apply {
             text = "Usar OBD/base novamente (tirar consumo falado)"
@@ -284,8 +305,9 @@ class MainActivity : Activity() {
                 Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                 Uri.parse("package:$packageName")
             )
+            waitingOverlayPermission = true
             startActivity(intent)
-            Toast.makeText(this, "Ative 'Exibir sobre outros apps' e volte", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Ative 'Exibir sobre outros apps'. Ao voltar, a bolha será iniciada.", Toast.LENGTH_LONG).show()
             return
         }
         analyzeRide(silent = true)

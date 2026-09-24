@@ -1,120 +1,61 @@
-# Corrida Ideal — MVP Android
+# Corrida Ideal — Android
 
-Aplicativo auxiliar para motorista de app. Ele **não acessa sua senha da Uber e não aceita/recusa corridas automaticamente**. A decisão continua sendo do motorista.
+Aplicativo auxiliar para motorista de app. Ele não entra na conta da Uber, não usa sua senha e não aceita/recusa corridas automaticamente.
 
-## O que esta versão faz
+## v0.2 — uso principal
 
-- Entrada manual da oferta: valor, km até o passageiro, km da viagem e tempo estimado.
-- Painel flutuante sobre outros apps.
-- Classificação **verde / amarela / vermelha**.
-- Cálculo de:
-  - distância total;
-  - gasto estimado de combustível;
-  - valor líquido após combustível;
-  - R$/km bruto e líquido;
-  - R$/hora líquido;
-  - **par necessário para a corrida virar verde: km/L + velocidade média de deslocamento**;
-  - tempo máximo aproximado para bater a meta de R$/hora.
-- Entrada por voz no painel flutuante.
-- Leitura de velocidade por GPS.
-- Integração Bluetooth Classic com adaptadores OBD2/ELM327 já pareados.
-- Leitura OBD de velocidade (PID 0D).
-- Tentativa de leitura direta de taxa de combustível (PID 5E); se não existir, estima usando MAF (PID 10) para gasolina.
-- Aprendizado empírico de velocidade × km/L em faixas de 5 km/h.
-- Alerta visual piscando quando a velocidade ultrapassa o teto configurado pelo usuário.
-- Possibilidade de substituir o consumo OBD por voz para a corrida atual.
+A v0.2 elimina a necessidade de falar a oferta inteira. O fluxo é:
 
-## Comandos de voz
+1. Abra **Corrida Ideal**.
+2. Toque **ATIVAR BOLHA 📸** e permita "Exibir sobre outros apps".
+3. Abra a **Uber Driver**.
+4. Quando uma oferta aparecer, toque uma vez na bolha `📸`.
+5. Na primeira utilização da leitura de tela, o Android pedirá permissão para compartilhar/capturar a tela. Depois de autorizada a sessão, volte à Uber.
+6. Toque `📸` de novo: o app faz OCR da tela, tenta identificar valor, km até o passageiro, km da viagem e tempo, e calcula verde/amarela/vermelha.
+7. Segure a bolha para abrir os detalhes. Arraste a bolha para mudar de posição.
 
-Toque no botão `🎙 Falar` do painel e diga, por exemplo:
+A captura é processada no aparelho e não é salva pelo Corrida Ideal.
 
-- `corrida 27 vírgula 50, 3 até buscar, 12 de viagem, 28 minutos`
-- `consumo 13 vírgula 5`
-- `salvar média 13 vírgula 2`
-- `limite 60`
-- `como está a corrida?`
+## Modo AUTO experimental
 
-Ao falar `consumo 13,5`, esse valor passa a valer para a corrida atual. Use o botão **Usar OBD/base novamente** para remover a substituição manual.
+Com o painel de detalhes aberto, o botão **AUTO** faz OCR periódico enquanto a sessão de captura estiver ativa. Ele é desligado por padrão. Use apenas quando estiver na tela da Uber, porque o OCR processará o que estiver visível no período.
 
-## Lógica econômica
+## O que é calculado
 
-Os padrões iniciais são editáveis:
+- distância total = km até buscar + km da viagem;
+- combustível estimado;
+- valor líquido após combustível;
+- R$/km bruto e líquido;
+- R$/hora líquido;
+- consumo mínimo / consumo-alvo para a corrida atingir sua meta;
+- média de deslocamento necessária para atingir a meta de R$/hora;
+- comparação com OBD2 e média real do trecho.
 
-- gasolina: R$ 6,98/L;
-- consumo base: 12,6 km/L;
-- melhor consumo realista: 14,0 km/L;
-- meta líquida: R$ 1,20/km;
-- meta líquida: R$ 35/h;
-- teto de alerta de velocidade: 60 km/h.
+## Cores
 
-A cor é definida assim:
+- Verde: já bate as metas configuradas.
+- Amarela: pode bater dentro do consumo/média realistas configurados.
+- Vermelha: exigiria cenário fora do limite configurado.
 
-- **Verde:** com o consumo atual e o tempo estimado, a corrida já bate as duas metas.
-- **Amarela:** ainda não bate as duas metas, mas existe um par `consumo + média` dentro do melhor consumo realista e do teto de velocidade configurado.
-- **Vermelha:** o par necessário fica fora do cenário configurado como realista.
-
-A velocidade calculada é **média de deslocamento**, não recomendação para exceder o limite legal. O teto configurado no app deve ser ajustado à via/rota quando necessário.
-
-## Como o app aprende a velocidade econômica do carro
-
-Quando o OBD fornece velocidade e consumo, o aplicativo acumula amostras em faixas de 5 km/h. Depois de pelo menos 8 amostras válidas em uma faixa, ela pode aparecer como faixa observada capaz de entregar o consumo necessário.
-
-Isso evita assumir que existe uma única “velocidade ideal” universal. Trânsito, marcha, relevo, ar-condicionado, carga e estilo de condução alteram o resultado.
+A média de velocidade é um indicador econômico/temporal; nunca substitui o limite legal da via.
 
 ## OBD2
 
-1. Pareie o ELM327/OBD2 nas configurações Bluetooth do Android.
-2. Abra o app e permita **Dispositivos próximos**.
-3. Selecione o OBD na lista.
-4. Toque em **Conectar OBD**.
+Pareie o ELM327/OBD2 nas configurações Bluetooth do Android, selecione no Corrida Ideal e toque **CONECTAR OBD**. O app tenta ler velocidade e consumo e aprende faixas de velocidade × km/L do seu próprio carro.
 
-O app tenta os seguintes dados OBD-II:
+## Voz
 
-- `010D` — velocidade do veículo;
-- `015E` — taxa de combustível em L/h;
-- fallback `0110` — MAF em g/s.
+A voz continua disponível como alternativa. Exemplos simples:
 
-O fallback por MAF foi configurado para gasolina (AFR estequiométrica 14,7:1 e densidade aproximada de 745 g/L). Em etanol/flex com mistura diferente, a estimativa por MAF precisa de calibração específica.
+- `consumo 13 vírgula 5`
+- `limite 60`
+- `como está a corrida?`
 
-## Permissões
+Você não precisa mais ditar valor + distâncias + tempo se a leitura da tela funcionar.
 
-O aplicativo pede apenas o necessário para os recursos escolhidos:
+## Limitações
 
-- microfone — comando por voz;
-- localização — velocidade por GPS;
-- dispositivos próximos/Bluetooth — OBD2;
-- exibir sobre outros apps — painel flutuante;
-- notificações — serviço ativo em primeiro plano.
-
-## Compilar no Android Studio
-
-1. Abra a pasta `CorridaIdeal` no Android Studio.
-2. Aguarde a sincronização do Gradle.
-3. Instale o Android SDK 35 se o Android Studio solicitar.
-4. Execute em um Android físico (o OBD e o painel flutuante fazem mais sentido no aparelho real).
-
-## Compilar pelo GitHub Actions
-
-O projeto inclui `.github/workflows/android.yml`.
-
-1. Crie um repositório GitHub e envie todo o conteúdo desta pasta.
-2. Abra a aba **Actions**.
-3. Execute **Build Android APK** ou faça um push para `main`/`master`.
-4. O artefato gerado se chama `CorridaIdeal-debug-apk` e contém `app-debug.apk`.
-
-## Limitações deste MVP
-
-- O app **não lê automaticamente a tela da Uber nesta versão**. A oferta entra por digitação ou voz.
-- O reconhecimento de voz contínuo por palavra-chave não fica permanentemente escutando, porque o Android restringe microfone contínuo em segundo plano e a própria API de reconhecimento não é indicada para escuta contínua. O painel oferece um botão de microfone sempre acessível e uma ação na notificação.
-- Alguns veículos não oferecem PID 5E. Nesses casos, o app usa MAF quando possível.
-- ELM327 clones variam bastante de qualidade e compatibilidade.
-- A média calculada pelo GPS começa quando o painel/medição é reiniciado. Use o botão `↻` para zerar o trecho.
-
-## Estrutura
-
-- `RideEconomics.kt` — cálculo econômico e classificação.
-- `VoiceParser.kt` — interpretação dos comandos em português.
-- `ObdHub.kt` — conexão ELM327 e PIDs OBD-II.
-- `OverlayService.kt` — painel flutuante, GPS, voz, alertas e TTS.
-- `RuntimeState.kt` — estado ao vivo e aprendizado velocidade × consumo.
-- `MainActivity.kt` — configuração, entrada manual e seleção do OBD.
+- O OCR depende de a oferta estar visível e legível. A interface da Uber pode mudar.
+- Se o OCR não identificar todos os campos, o app informa o que faltou em vez de inventar uma decisão.
+- A primeira versão do parser usa heurísticas e pode precisar de ajuste depois de testarmos uma captura real da tela de oferta da Uber.
+- A leitura automática usa uma sessão de MediaProjection que precisa ser autorizada pelo usuário no Android.

@@ -2,12 +2,12 @@ package com.yuri.corridaideal
 
 import android.Manifest
 import android.app.*
-import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
@@ -23,12 +23,24 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.*
 import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 class OverlayService : Service(), LocationListener, TextToSpeech.OnInitListener {
     private lateinit var windowManager: WindowManager
-    private var overlayView: View? = null
+    private lateinit var root: LinearLayout
+    private lateinit var bubble: TextView
+    private lateinit var details: LinearLayout
     private lateinit var params: WindowManager.LayoutParams
+    private lateinit var gradeText: TextView
+    private lateinit var moneyText: TextView
+    private lateinit var liveText: TextView
+    private lateinit var adviceText: TextView
+    private lateinit var speedText: TextView
+    private lateinit var captureStatusText: TextView
+    private lateinit var micButton: Button
+    private lateinit var autoButton: Button
+
     private var locationManager: LocationManager? = null
     private var speechRecognizer: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
@@ -36,18 +48,10 @@ class OverlayService : Service(), LocationListener, TextToSpeech.OnInitListener 
     private var tripDistanceMeters = 0.0
     private var tripStartElapsed = SystemClock.elapsedRealtime()
     private var blinking = false
+    private var expanded = false
     private val handler = Handler(Looper.getMainLooper())
 
-    private lateinit var gradeText: TextView
-    private lateinit var moneyText: TextView
-    private lateinit var liveText: TextView
-    private lateinit var adviceText: TextView
-    private lateinit var speedText: TextView
-    private lateinit var micButton: Button
-
-    private val stateListener: (LiveSnapshot) -> Unit = { snap ->
-        handler.post { render(snap) }
-    }
+    private val stateListener: (LiveSnapshot) -> Unit = { snap -> handler.post { render(snap) } }
 
     override fun onCreate() {
         super.onCreate()
@@ -61,6 +65,12 @@ class OverlayService : Service(), LocationListener, TextToSpeech.OnInitListener 
         RuntimeState.addListener(stateListener)
     }
 
+    override fun onBind(intent: Intent?) = null
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_LISTEN) listenNow()
+        return START_STICKY
+    }
 
     private fun promoteForeground() {
         val notification = buildNotification()
@@ -79,143 +89,197 @@ class OverlayService : Service(), LocationListener, TextToSpeech.OnInitListener 
                 types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
             }
             if (types != 0) startForeground(44, notification, types) else startForeground(44, notification)
-        } else {
-            startForeground(44, notification)
-        }
+        } else startForeground(44, notification)
     }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_LISTEN) listenNow()
-        return START_STICKY
-    }
-
-    override fun onBind(intent: Intent?) = null
 
     private fun createOverlay() {
-        if (!Settings.canDrawOverlays(this)) {
-            stopSelf()
-            return
-        }
+        if (!Settings.canDrawOverlays(this)) { stopSelf(); return }
 
-        val root = LinearLayout(this).apply {
+        root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(10), dp(8), dp(10), dp(8))
-            setBackgroundColor(Color.argb(220, 22, 22, 22))
+            gravity = Gravity.END
         }
 
-        val top = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+        bubble = TextView(this).apply {
+            text = "📸"
+            textSize = 25f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            background = circle(Color.rgb(70, 70, 70))
+            setPadding(0, 0, 0, 0)
+            contentDescription = "Ler oferta da tela"
         }
-        val title = TextView(this).apply {
+        root.addView(bubble, LinearLayout.LayoutParams(dp(62), dp(62)))
+
+        details = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(10), dp(12), dp(12))
+            setBackgroundColor(Color.argb(238, 22, 22, 22))
+            visibility = View.GONE
+        }
+
+        val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        top.addView(TextView(this).apply {
             text = "Corrida Ideal"
             setTextColor(Color.WHITE)
             textSize = 14f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
-        }
-        val spacer = Space(this)
-        val close = Button(this).apply {
-            text = "×"
-            textSize = 16f
-            setPadding(0,0,0,0)
-            setOnClickListener { stopSelf() }
-        }
-        top.addView(title, LinearLayout.LayoutParams(0, dp(34), 1f))
-        top.addView(spacer, LinearLayout.LayoutParams(dp(4), 1))
-        top.addView(close, LinearLayout.LayoutParams(dp(40), dp(34)))
+        }, LinearLayout.LayoutParams(0, dp(38), 1f))
+        top.addView(Button(this).apply {
+            text = "×"; textSize = 16f; setOnClickListener { stopSelf() }
+        }, LinearLayout.LayoutParams(dp(44), dp(38)))
 
         gradeText = textView(18f, true)
         moneyText = textView(13f, false)
+        speedText = textView(21f, true)
         liveText = textView(13f, false)
+        captureStatusText = textView(12f, true)
         adviceText = textView(12f, false)
-        speedText = textView(22f, true)
 
-        val bottom = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+        val captureButton = Button(this).apply {
+            text = "📸 LER OFERTA AGORA"
+            setOnClickListener { captureOrRequestPermission() }
+        }
+        autoButton = Button(this).apply {
+            text = "AUTO: DESLIGADO"
+            setOnClickListener { toggleAuto() }
         }
         micButton = Button(this).apply {
-            text = "🎙 Falar"
+            text = "🎙 Voz"
             setOnClickListener { listenNow() }
         }
         val resetButton = Button(this).apply {
-            text = "↻"
-            setOnClickListener {
-                tripDistanceMeters = 0.0
-                tripStartElapsed = SystemClock.elapsedRealtime()
-                lastLocation = null
-                RuntimeState.tripAverageSpeedKmh = null
-                RuntimeState.notifyChanged()
-            }
+            text = "↻ Zerar trecho"
+            setOnClickListener { resetTrip() }
         }
-        bottom.addView(micButton, LinearLayout.LayoutParams(0, dp(44), 1f))
-        bottom.addView(resetButton, LinearLayout.LayoutParams(dp(52), dp(44)))
 
-        root.addView(top)
-        root.addView(gradeText)
-        root.addView(moneyText)
-        root.addView(speedText)
-        root.addView(liveText)
-        root.addView(adviceText)
-        root.addView(bottom)
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        row.addView(micButton, LinearLayout.LayoutParams(0, dp(44), 1f))
+        row.addView(resetButton, LinearLayout.LayoutParams(0, dp(44), 1f))
+
+        details.addView(top)
+        details.addView(gradeText)
+        details.addView(moneyText)
+        details.addView(speedText)
+        details.addView(liveText)
+        details.addView(captureStatusText)
+        details.addView(adviceText)
+        details.addView(captureButton, full(top = 8))
+        details.addView(autoButton, full(top = 4))
+        details.addView(row, full(top = 4))
+        root.addView(details)
 
         params = WindowManager.LayoutParams(
-            dp(285), WindowManager.LayoutParams.WRAP_CONTENT,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            dp(70), WindowManager.LayoutParams.WRAP_CONTENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else WindowManager.LayoutParams.TYPE_PHONE,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.END
             x = dp(8)
-            y = dp(120)
+            y = dp(150)
         }
 
-        root.setOnTouchListener(object : View.OnTouchListener {
+        installBubbleTouch()
+        windowManager.addView(root, params)
+        render(RuntimeState.snapshot())
+    }
+
+    private fun installBubbleTouch() {
+        bubble.setOnTouchListener(object : View.OnTouchListener {
             var startX = 0
             var startY = 0
-            var touchX = 0f
-            var touchY = 0f
+            var downX = 0f
+            var downY = 0f
+            var downAt = 0L
+            var moved = false
+
             override fun onTouch(v: View?, event: MotionEvent): Boolean {
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
                         startX = params.x; startY = params.y
-                        touchX = event.rawX; touchY = event.rawY
+                        downX = event.rawX; downY = event.rawY
+                        downAt = System.currentTimeMillis(); moved = false
                         return true
                     }
                     MotionEvent.ACTION_MOVE -> {
-                        params.x = startX - (event.rawX - touchX).toInt()
-                        params.y = startY + (event.rawY - touchY).toInt()
+                        val dx = event.rawX - downX
+                        val dy = event.rawY - downY
+                        if (abs(dx) > dp(6) || abs(dy) > dp(6)) moved = true
+                        params.x = startX - dx.toInt()
+                        params.y = startY + dy.toInt()
                         runCatching { windowManager.updateViewLayout(root, params) }
+                        return true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        if (!moved) {
+                            val held = System.currentTimeMillis() - downAt
+                            if (held >= 550) toggleExpanded() else captureOrRequestPermission()
+                        }
                         return true
                     }
                 }
                 return false
             }
         })
-
-        overlayView = root
-        windowManager.addView(root, params)
-        render(RuntimeState.snapshot())
     }
 
-    private fun textView(size: Float, bold: Boolean) = TextView(this).apply {
-        setTextColor(Color.WHITE)
-        textSize = size
-        if (bold) setTypeface(typeface, android.graphics.Typeface.BOLD)
-        setPadding(0, dp(2), 0, dp(2))
+    private fun captureOrRequestPermission() {
+        if (!RuntimeState.captureReady) {
+            val i = Intent(this, CapturePermissionActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(i)
+            return
+        }
+        val i = Intent(this, ScreenCaptureService::class.java).setAction(ScreenCaptureService.ACTION_CAPTURE_ONCE)
+        startService(i)
+        RuntimeState.captureStatus = "Lendo oferta…"
+        RuntimeState.notifyChanged()
+    }
+
+    private fun toggleAuto() {
+        if (!RuntimeState.captureReady) {
+            captureOrRequestPermission()
+            return
+        }
+        val turnOn = !RuntimeState.autoCaptureEnabled
+        val action = if (turnOn) ScreenCaptureService.ACTION_AUTO_ON else ScreenCaptureService.ACTION_AUTO_OFF
+        startService(Intent(this, ScreenCaptureService::class.java).setAction(action))
+    }
+
+    private fun toggleExpanded() {
+        expanded = !expanded
+        details.visibility = if (expanded) View.VISIBLE else View.GONE
+        params.width = if (expanded) dp(310) else dp(70)
+        runCatching { windowManager.updateViewLayout(root, params) }
+    }
+
+    private fun resetTrip() {
+        tripDistanceMeters = 0.0
+        tripStartElapsed = SystemClock.elapsedRealtime()
+        lastLocation = null
+        RuntimeState.tripAverageSpeedKmh = null
+        RuntimeState.notifyChanged()
     }
 
     private fun render(s: LiveSnapshot) {
         val a = s.analysis
         val grade = a?.grade
+        val bubbleColor = when (grade) {
+            RideGrade.GREEN -> Color.rgb(32, 145, 70)
+            RideGrade.YELLOW -> Color.rgb(190, 145, 15)
+            RideGrade.RED -> Color.rgb(185, 55, 55)
+            null -> if (s.captureReady) Color.rgb(45, 105, 175) else Color.rgb(75, 75, 75)
+        }
+        bubble.background = circle(bubbleColor)
+        bubble.text = if (s.autoCaptureEnabled) "AUTO" else "📸"
+        bubble.textSize = if (s.autoCaptureEnabled) 12f else 25f
+
         gradeText.text = when (grade) {
             RideGrade.GREEN -> "🟢 VERDE — VALE A META"
             RideGrade.YELLOW -> "🟡 AMARELA — DEPENDE"
             RideGrade.RED -> "🔴 VERMELHA — FORA DA META"
-            null -> "⚪ Aguardando corrida"
+            null -> "⚪ Aguardando oferta"
         }
         gradeText.setTextColor(when (grade) {
             RideGrade.GREEN -> Color.rgb(90, 220, 120)
@@ -224,11 +288,9 @@ class OverlayService : Service(), LocationListener, TextToSpeech.OnInitListener 
             null -> Color.LTGRAY
         })
 
-        if (a != null) {
-            moneyText.text = "%.1f km • líquido R$ %.2f • R$ %.2f/km • R$ %.0f/h".format(
-                a.totalKm, a.netValue, a.netPerKm, a.netPerHour
-            )
-        } else moneyText.text = "Fale ou digite uma oferta"
+        moneyText.text = if (a != null) {
+            "%.1f km • líquido R$ %.2f • R$ %.2f/km • R$ %.0f/h".format(a.totalKm, a.netValue, a.netPerKm, a.netPerHour)
+        } else "Toque na bolha 📸 com a oferta da Uber visível"
 
         val speed = s.obdSpeedKmh ?: s.gpsSpeedKmh ?: 0.0
         val over = speed > s.settings.safetySpeedLimitKmh && s.settings.safetySpeedLimitKmh > 0
@@ -246,19 +308,38 @@ class OverlayService : Service(), LocationListener, TextToSpeech.OnInitListener 
             if (avgNeed != null) append("\nMédia-alvo: %.0f km/h".format(avgNeed))
             if (avgNow != null) append(" • atual %.0f".format(avgNow))
             append("\n${s.obdStatus}")
-            if (s.manualConsumptionOverrideKml != null) append(" • consumo por voz")
         }
 
+        captureStatusText.text = s.captureStatus + if (s.captureConfidence > 0) " • leitura ${s.captureConfidence}%" else ""
+        autoButton.text = if (s.autoCaptureEnabled) "AUTO: LIGADO" else "AUTO: DESLIGADO"
+
         if (a != null) {
-            val profile = EfficiencyProfile(this)
-            val learned = req?.let { profile.rangesMeeting(it) }
+            val learned = req?.let { EfficiencyProfile(this).rangesMeeting(it) }
             adviceText.text = when {
                 learned != null -> "Faixa observada no seu carro para esse consumo: $learned"
-                req != null -> "OBD ainda aprendendo a faixa de velocidade que entrega ≥ %.1f km/L.".format(req)
+                req != null -> "Para ficar verde: ≥ %.1f km/L e média ≈ %.0f km/h. A média não substitui o limite da via.".format(req, avgNeed ?: 0.0)
                 else -> a.reason
             }
-        } else adviceText.text = "Toque em 🎙 e diga: corrida 27,50; 3 até buscar; 12 de viagem; 28 minutos."
+        } else {
+            adviceText.text = "Uso normal: 1 toque na bolha = ler a oferta. Segure a bolha = abrir detalhes. Arraste para mudar de lugar."
+        }
     }
+
+    private fun textView(size: Float, bold: Boolean) = TextView(this).apply {
+        setTextColor(Color.WHITE); textSize = size
+        if (bold) setTypeface(typeface, android.graphics.Typeface.BOLD)
+        setPadding(0, dp(2), 0, dp(2))
+    }
+
+    private fun circle(color: Int) = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(color)
+        setStroke(dp(2), Color.argb(150, 255, 255, 255))
+    }
+
+    private fun full(top: Int = 2) = LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+    ).apply { topMargin = dp(top) }
 
     private fun setBlinking(active: Boolean) {
         if (active == blinking) return
@@ -278,12 +359,9 @@ class OverlayService : Service(), LocationListener, TextToSpeech.OnInitListener 
 
     private fun setupLocation() {
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
-            checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED
-        ) return
+            checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) return
         locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
-        runCatching {
-            locationManager?.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 1f, this)
-        }
+        runCatching { locationManager?.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 1f, this) }
     }
 
     override fun onLocationChanged(location: Location) {
@@ -307,15 +385,11 @@ class OverlayService : Service(), LocationListener, TextToSpeech.OnInitListener 
                 override fun onBeginningOfSpeech() {}
                 override fun onRmsChanged(rmsdB: Float) {}
                 override fun onBufferReceived(buffer: ByteArray?) {}
-                override fun onEndOfSpeech() { micButton.text = "🎙 Falar" }
-                override fun onError(error: Int) {
-                    micButton.text = "🎙 Falar"
-                    speak("Não consegui entender. Tente novamente.")
-                }
+                override fun onEndOfSpeech() { micButton.text = "🎙 Voz" }
+                override fun onError(error: Int) { micButton.text = "🎙 Voz"; speak("Não consegui entender.") }
                 override fun onResults(results: Bundle?) {
-                    micButton.text = "🎙 Falar"
-                    val list = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    val heard = list?.firstOrNull() ?: return
+                    micButton.text = "🎙 Voz"
+                    val heard = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: return
                     applyVoiceCommand(VoiceParser.parse(heard))
                 }
                 override fun onPartialResults(partialResults: Bundle?) {}
@@ -326,15 +400,13 @@ class OverlayService : Service(), LocationListener, TextToSpeech.OnInitListener 
 
     private fun listenNow() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            speak("Abra o aplicativo e permita o microfone.")
-            return
+            speak("Abra o aplicativo e permita o microfone."); return
         }
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "pt-BR")
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "Diga os dados da corrida")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Ex.: consumo 13 vírgula 5")
         }
         runCatching { speechRecognizer?.startListening(intent) }
     }
@@ -344,83 +416,52 @@ class OverlayService : Service(), LocationListener, TextToSpeech.OnInitListener 
             is VoiceCommand.Ride -> {
                 RuntimeState.ride = RideInput(command.fare, command.pickupKm, command.rideKm, command.minutes)
                 RuntimeState.manualConsumptionOverrideKml = null
-                tripDistanceMeters = 0.0
-                tripStartElapsed = SystemClock.elapsedRealtime()
-                lastLocation = null
-                RuntimeState.recalculate()
-                speak(statusSentence())
+                resetTrip(); RuntimeState.recalculate(); speak(statusSentence())
             }
             is VoiceCommand.CurrentConsumption -> {
                 RuntimeState.manualConsumptionOverrideKml = command.kml
-                RuntimeState.recalculate()
-                speak("Consumo da corrida atualizado para %.1f quilômetros por litro.".format(command.kml))
+                RuntimeState.recalculate(); speak("Consumo atualizado para %.1f quilômetros por litro.".format(command.kml))
             }
             is VoiceCommand.SaveBaseConsumption -> {
-                RuntimeState.settings = RuntimeState.settings.copy(
-                    baseConsumptionKml = command.kml,
-                    currentConsumptionKml = command.kml
-                )
+                RuntimeState.settings = RuntimeState.settings.copy(baseConsumptionKml = command.kml, currentConsumptionKml = command.kml)
                 RuntimeState.manualConsumptionOverrideKml = null
-                RuntimeState.recalculate()
-                speak("Média base salva em %.1f quilômetros por litro.".format(command.kml))
+                RuntimeState.recalculate(); speak("Média base salva.")
             }
             is VoiceCommand.SpeedLimit -> {
                 RuntimeState.settings = RuntimeState.settings.copy(safetySpeedLimitKmh = command.kmh)
-                RuntimeState.recalculate()
-                speak("Limite de alerta configurado em %.0f quilômetros por hora.".format(command.kmh))
+                RuntimeState.recalculate(); speak("Alerta configurado em %.0f quilômetros por hora.".format(command.kmh))
             }
             VoiceCommand.Status -> speak(statusSentence())
-            VoiceCommand.Unknown -> speak("Comando não reconhecido. Diga corrida, consumo, limite ou como está a corrida.")
+            VoiceCommand.Unknown -> speak("Use a câmera para ler a oferta. Por voz, você pode dizer consumo 13 vírgula 5, limite 60, ou como está a corrida.")
         }
     }
 
     private fun statusSentence(): String {
         val a = RuntimeState.analysis ?: return "Ainda não tenho uma corrida para analisar."
-        val grade = when (a.grade) {
-            RideGrade.GREEN -> "verde"
-            RideGrade.YELLOW -> "amarela"
-            RideGrade.RED -> "vermelha"
-        }
-        val req = a.requiredConsumptionKml?.takeIf { it.isFinite() }
-        val speed = a.requiredAverageSpeedKmh?.takeIf { it.isFinite() }
-        return buildString {
-            append("Corrida $grade. Líquido estimado %.2f reais. ".format(a.netValue))
-            append("%.2f reais líquidos por quilômetro e %.0f reais por hora. ".format(a.netPerKm, a.netPerHour))
-            if (req != null) append("Para virar verde, consumo alvo %.1f por litro. ".format(req))
-            if (speed != null) append("Média de deslocamento necessária perto de %.0f quilômetros por hora.".format(speed))
-        }
+        val grade = when (a.grade) { RideGrade.GREEN -> "verde"; RideGrade.YELLOW -> "amarela"; RideGrade.RED -> "vermelha" }
+        return "Corrida $grade. %.2f reais líquidos por quilômetro e %.0f reais líquidos por hora.".format(a.netPerKm, a.netPerHour)
     }
 
-    private fun speak(text: String) {
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "corrida-status")
-    }
-
-    override fun onInit(status: Int) {
-        if (status == TextToSpeech.SUCCESS) tts?.language = Locale("pt", "BR")
-    }
+    private fun speak(text: String) { tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "corrida-status") }
+    override fun onInit(status: Int) { if (status == TextToSpeech.SUCCESS) tts?.language = Locale("pt", "BR") }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(CHANNEL_ID, "Corrida Ideal ativo", NotificationManager.IMPORTANCE_LOW)
-            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(
+                NotificationChannel(CHANNEL_ID, "Corrida Ideal ativo", NotificationManager.IMPORTANCE_LOW)
+            )
         }
     }
 
     private fun buildNotification(): Notification {
-        val open = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-        val listen = PendingIntent.getService(
-            this, 1, Intent(this, OverlayService::class.java).setAction(ACTION_LISTEN),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
+        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val listen = PendingIntent.getService(this, 1, Intent(this, OverlayService::class.java).setAction(ACTION_LISTEN), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         return Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("Corrida Ideal ativo")
-            .setContentText("Análise, velocidade e OBD em primeiro plano")
-            .setSmallIcon(android.R.drawable.ic_menu_compass)
+            .setContentText("Bolha 📸 pronta para analisar ofertas")
+            .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setContentIntent(open)
-            .addAction(android.R.drawable.ic_btn_speak_now, "Falar", listen)
+            .addAction(android.R.drawable.ic_btn_speak_now, "Voz", listen)
             .setOngoing(true)
             .build()
     }
@@ -431,8 +472,7 @@ class OverlayService : Service(), LocationListener, TextToSpeech.OnInitListener 
         speechRecognizer?.destroy()
         tts?.stop(); tts?.shutdown()
         handler.removeCallbacksAndMessages(null)
-        overlayView?.let { runCatching { windowManager.removeView(it) } }
-        overlayView = null
+        runCatching { windowManager.removeView(root) }
         super.onDestroy()
     }
 
