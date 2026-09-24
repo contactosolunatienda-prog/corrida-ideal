@@ -1,0 +1,26 @@
+# Versão 0.1 — checklist funcional
+
+- [x] Entrada manual de oferta
+- [x] Voz para oferta
+- [x] Voz para consumo atual
+- [x] Voz para salvar média-base
+- [x] Voz para configurar teto de alerta
+- [x] Resposta falada do status
+- [x] Verde / amarela / vermelha
+- [x] Distância até passageiro incluída na conta
+- [x] Combustível incluído na conta
+- [x] Meta líquida por km
+- [x] Meta líquida por hora
+- [x] Par consumo + média para "virar verde"
+- [x] Painel flutuante
+- [x] Velocidade GPS
+- [x] Alerta piscando acima do teto configurado
+- [x] Bluetooth OBD2 ELM327
+- [x] PID de velocidade
+- [x] PID de taxa de combustível
+- [x] Fallback por MAF
+- [x] Aprendizado de faixa velocidade × consumo
+- [ ] Leitura automática da oferta exibida pelo Uber Driver
+- [ ] Histórico de corridas e lucro do dia
+- [ ] Mapa de regiões/horários mais rentáveis
+- [ ] Calibração específica para etanol/flex
