@@ -1,61 +1,61 @@
-# Corrida Ideal — Android
+# Corrida Ideal — v0.4 Android
 
-Aplicativo auxiliar para motorista de app. Ele não entra na conta da Uber, não usa sua senha e não aceita/recusa corridas automaticamente.
+Aplicativo auxiliar para motorista de app. Não acessa senha da Uber, não aceita/recusa corridas automaticamente e mantém a decisão com o motorista.
 
-## v0.2 — uso principal
+## Uso principal
 
-A v0.2 elimina a necessidade de falar a oferta inteira. O fluxo é:
+1. Abra o Corrida Ideal e salve seus parâmetros.
+2. Ative a bolha e a leitura de tela.
+3. Abra o Uber Driver.
+4. Quando chegar uma oferta, toque na bolha 📸. O OCR lê valor, km até buscar, km da viagem e tempo.
+5. O app classifica 🟢 / 🟡 / 🔴 e fala o resultado.
+6. Depois de uma oferta válida, a leitura automática fica ativa para tentar reconhecer quando você aceitou e quando a viagem terminou.
+7. Se a detecção falhar, segure a bolha para abrir os detalhes e use `✓ ACEITEI` ou `■ FINALIZAR`.
+8. No fim do dia, abra `📊 RELATÓRIO DO DIA / ÚLTIMAS CORRIDAS`.
 
-1. Abra **Corrida Ideal**.
-2. Toque **ATIVAR BOLHA 📸** e permita "Exibir sobre outros apps".
-3. Abra a **Uber Driver**.
-4. Quando uma oferta aparecer, toque uma vez na bolha `📸`.
-5. Na primeira utilização da leitura de tela, o Android pedirá permissão para compartilhar/capturar a tela. Depois de autorizada a sessão, volte à Uber.
-6. Toque `📸` de novo: o app faz OCR da tela, tenta identificar valor, km até o passageiro, km da viagem e tempo, e calcula verde/amarela/vermelha.
-7. Segure a bolha para abrir os detalhes. Arraste a bolha para mudar de posição.
+## Classificação padrão
 
-A captura é processada no aparelho e não é salva pelo Corrida Ideal.
+- 🟢 Verde: pelo menos R$ 1,70 bruto/km total **e** R$ 35 líquido/h.
+- 🟡 Amarela: próxima da meta (piso automático de 80%) ou pode chegar à meta com consumo/tempo realistas.
+- 🔴 Vermelha: retorno abaixo do piso ou cenário necessário fora do que foi configurado como realista.
 
-## Modo AUTO experimental
+## Relatório do dia
 
-Com o painel de detalhes aberto, o botão **AUTO** faz OCR periódico enquanto a sessão de captura estiver ativa. Ele é desligado por padrão. Use apenas quando estiver na tela da Uber, porque o OCR processará o que estiver visível no período.
+O relatório usa apenas corridas aceitas pelo fluxo do app (detecção automática ou botão `✓ ACEITEI`). Ele mostra:
 
-## O que é calculado
+- quantidade de corridas concluídas/em andamento;
+- faturamento bruto registrado pelas ofertas;
+- litros e valor de combustível estimados;
+- líquido após combustível;
+- km totais;
+- km planejados de busca e de viagem;
+- consumo médio;
+- bruto por km, líquido por km e líquido por hora;
+- ofertas analisadas por cor e aceitas por cor;
+- quantas indicações verde/amarela terminaram realmente batendo a meta verde;
+- últimas corridas com previsto x realizado.
 
-- distância total = km até buscar + km da viagem;
-- combustível estimado;
-- valor líquido após combustível;
-- R$/km bruto e líquido;
-- R$/hora líquido;
-- consumo mínimo / consumo-alvo para a corrida atingir sua meta;
-- média de deslocamento necessária para atingir a meta de R$/hora;
-- comparação com OBD2 e média real do trecho.
+Se o OBD fornecer nível do tanque (PID 2F) e você informar a capacidade do tanque, o relatório também estima combustível restante, valor do combustível restante e autonomia em km.
 
-## Cores
+## Dados e privacidade
 
-- Verde: já bate as metas configuradas.
-- Amarela: pode bater dentro do consumo/média realistas configurados.
-- Vermelha: exigiria cenário fora do limite configurado.
+- OCR e cálculos são feitos no aparelho.
+- Nenhuma captura de tela é salva pelo app.
+- Histórico e relatório ficam em SharedPreferences no próprio Android.
+- O app não usa sua senha da Uber.
 
-A média de velocidade é um indicador econômico/temporal; nunca substitui o limite legal da via.
+## Limitações do MVP
 
-## OBD2
+- A leitura depende do layout/texto atual do Uber Driver. Mudanças na interface podem exigir ajuste do parser.
+- O valor bruto do relatório usa o valor lido na oferta. Gorjetas, ajustes e alterações posteriores da Uber não são consultados diretamente.
+- A distância real depende de GPS; se indisponível, o app usa a distância planejada da oferta como fallback.
+- O consumo real depende do PID OBD disponível. Sem leitura confiável, usa o consumo configurado.
+- O nível do tanque PID 2F não é suportado por todos os veículos/adaptadores.
 
-Pareie o ELM327/OBD2 nas configurações Bluetooth do Android, selecione no Corrida Ideal e toque **CONECTAR OBD**. O app tenta ler velocidade e consumo e aprende faixas de velocidade × km/L do seu próprio carro.
+## Compilação
 
-## Voz
+O workflow `.github/workflows/android.yml` gera o APK de debug automaticamente em cada push para `main`/`master`.
 
-A voz continua disponível como alternativa. Exemplos simples:
+### Encerrar o expediente / ocultar a bolha
 
-- `consumo 13 vírgula 5`
-- `limite 60`
-- `como está a corrida?`
-
-Você não precisa mais ditar valor + distâncias + tempo se a leitura da tela funcionar.
-
-## Limitações
-
-- O OCR depende de a oferta estar visível e legível. A interface da Uber pode mudar.
-- Se o OCR não identificar todos os campos, o app informa o que faltou em vez de inventar uma decisão.
-- A primeira versão do parser usa heurísticas e pode precisar de ajuste depois de testarmos uma captura real da tela de oferta da Uber.
-- A leitura automática usa uma sessão de MediaProjection que precisa ser autorizada pelo usuário no Android.
+Abra os detalhes da bolha (segure a bolha) e toque em **⏻ ENCERRAR / OCULTAR BOLHA** ou no **×**. A bolha some e a leitura de tela é encerrada para economizar bateria. Ao abrir o Corrida Ideal novamente, a bolha volta automaticamente. A permissão de captura de tela do Android pode precisar ser autorizada novamente para uma nova sessão.

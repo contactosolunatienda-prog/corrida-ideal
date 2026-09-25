@@ -32,6 +32,10 @@
         android:theme="@style/AppTheme">
 
         <activity
+            android:name=".ReportActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".CapturePermissionActivity"
             android:exported="false"
             android:excludeFromRecents="true" />

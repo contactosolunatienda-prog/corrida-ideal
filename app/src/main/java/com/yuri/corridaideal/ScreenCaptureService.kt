@@ -152,10 +152,39 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
             .addOnSuccessListener { text ->
                 val raw = text.text
                 val parsed = ScreenOfferParser.parse(raw)
+                val screenState = ScreenStateDetector.detect(raw)
                 RuntimeState.lastOcrText = raw
                 RuntimeState.captureConfidence = parsed.confidence
-                RuntimeState.captureStatus = parsed.message
-                if (parsed.ride != null) {
+
+                var lifecycleHandled = false
+                when (screenState) {
+                    UberScreenState.COMPLETED -> {
+                        if (RideHistoryStore.activeRecord(this) != null) {
+                            val completed = RideHistoryStore.completeActive(
+                                this, RuntimeState.activeTripDistanceKm, RuntimeState.activeTripElapsedMinutes,
+                                RuntimeState.activeTripAvgConsumptionKml, RuntimeState.settings
+                            )
+                            if (completed != null) {
+                                RuntimeState.captureStatus = "Fim da corrida detectado — resultado salvo"
+                                speak("Corrida finalizada e salva no relatório do dia.")
+                                lifecycleHandled = true
+                            }
+                        }
+                    }
+                    UberScreenState.TO_PICKUP, UberScreenState.ON_TRIP -> {
+                        if (RideHistoryStore.activeRecord(this) == null && RideHistoryStore.pendingOffer(this) != null) {
+                            val accepted = RideHistoryStore.confirmAccepted(this, "ocr")
+                            if (accepted != null) {
+                                RuntimeState.captureStatus = "Aceite detectado automaticamente — corrida no relatório"
+                                speak("Aceite detectado. Corrida adicionada ao relatório do dia.")
+                                lifecycleHandled = true
+                            }
+                        }
+                    }
+                    else -> Unit
+                }
+
+                if (!lifecycleHandled && parsed.ride != null) {
                     val signature = "%.2f|%.2f|%.2f|%.0f".format(
                         parsed.ride.fare, parsed.ride.pickupKm, parsed.ride.rideKm, parsed.ride.estimatedMinutes
                     )
@@ -164,10 +193,20 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
                     RuntimeState.ride = parsed.ride
                     RuntimeState.manualConsumptionOverrideKml = null
                     RuntimeState.recalculate()
-                    if (!autoEnabled || changed) speakAnalysis()
-                } else {
+                    RuntimeState.analysis?.let { RideHistoryStore.onOfferAnalyzed(this, parsed.ride, it) }
+                    if (!autoEnabled) {
+                        autoEnabled = true
+                        RuntimeState.autoCaptureEnabled = true
+                    }
+                    RuntimeState.captureStatus = parsed.message + " • acompanhando aceite/fim"
                     RuntimeState.notifyChanged()
-                    if (!autoEnabled) speak("Não consegui ler toda a oferta. Deixe a corrida visível e toque novamente.")
+                    if (changed) speakAnalysis()
+                } else {
+                    if (!lifecycleHandled) RuntimeState.captureStatus = parsed.message
+                    RuntimeState.notifyChanged()
+                    if (!autoEnabled && !lifecycleHandled && screenState == UberScreenState.UNKNOWN) {
+                        speak("Não consegui ler toda a oferta. Deixe a corrida visível e toque novamente.")
+                    }
                 }
             }
             .addOnFailureListener {
@@ -190,6 +229,7 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
         }
         val detail = buildString {
             append("Corrida $grade. ")
+            append("%.2f reais brutos por quilômetro total. ".format(a.grossPerKm))
             append("%.2f reais líquidos por quilômetro. ".format(a.netPerKm))
             append("%.0f reais líquidos por hora. ".format(a.netPerHour))
             a.requiredConsumptionKml?.takeIf { it.isFinite() }?.let {

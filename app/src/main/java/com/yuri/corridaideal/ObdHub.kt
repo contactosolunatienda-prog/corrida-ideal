@@ -43,10 +43,15 @@ object ObdHub {
                 setStatus("OBD conectado", true)
                 val profile = EfficiencyProfile(context.applicationContext)
 
+                var loopCount = 0
                 while (running.get() && s.isConnected) {
+                    loopCount++
                     val speed = querySpeed(input, output)
                     val fuelRate = queryFuelRate(input, output)
                     val maf = if (fuelRate == null) queryMaf(input, output) else null
+                    if (loopCount % 8 == 1) {
+                        queryFuelLevel(input, output)?.let { RuntimeState.fuelLevelPercent = it }
+                    }
                     val consumption = when {
                         speed != null && speed >= 1.0 && fuelRate != null && fuelRate > 0.05 -> speed / fuelRate
                         speed != null && speed >= 1.0 && maf != null && maf > 0.1 -> {
@@ -118,6 +123,16 @@ object ObdHub {
         if (hex.contains("NODATA")) return null
         val match = Regex("415E([0-9A-F]{4})").find(hex) ?: return null
         return match.groupValues[1].toInt(16) / 20.0 // L/h, SAE PID 5E scale 0.05
+    }
+
+
+    private fun queryFuelLevel(input: InputStream, output: OutputStream): Double? {
+        val response = sendCommand(input, output, "012F")
+        val hex = compact(response)
+        if (hex.contains("NODATA")) return null
+        val match = Regex("412F([0-9A-F]{2})").find(hex) ?: return null
+        val a = match.groupValues[1].toInt(16)
+        return a * 100.0 / 255.0
     }
 
     private fun queryMaf(input: InputStream, output: OutputStream): Double? {

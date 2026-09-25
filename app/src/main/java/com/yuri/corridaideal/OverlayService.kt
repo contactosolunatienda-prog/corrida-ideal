@@ -49,9 +49,24 @@ class OverlayService : Service(), LocationListener, TextToSpeech.OnInitListener 
     private var tripStartElapsed = SystemClock.elapsedRealtime()
     private var blinking = false
     private var expanded = false
+    private var lastActiveRecordId: String? = null
+    private var consumptionSum = 0.0
+    private var consumptionSamples = 0
     private val handler = Handler(Looper.getMainLooper())
 
-    private val stateListener: (LiveSnapshot) -> Unit = { snap -> handler.post { render(snap) } }
+    private val stateListener: (LiveSnapshot) -> Unit = { snap ->
+        handler.post {
+            if (snap.activeRideRecordId != null && snap.activeRideRecordId != lastActiveRecordId) {
+                lastActiveRecordId = snap.activeRideRecordId
+                resetTrip()
+                consumptionSum = 0.0
+                consumptionSamples = 0
+            } else if (snap.activeRideRecordId == null) {
+                lastActiveRecordId = null
+            }
+            render(snap)
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -126,7 +141,10 @@ class OverlayService : Service(), LocationListener, TextToSpeech.OnInitListener 
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         }, LinearLayout.LayoutParams(0, dp(38), 1f))
         top.addView(Button(this).apply {
-            text = "×"; textSize = 16f; setOnClickListener { stopSelf() }
+            text = "×"
+            textSize = 16f
+            contentDescription = "Ocultar bolha até abrir o Corrida Ideal novamente"
+            setOnClickListener { hideUntilAppReopen() }
         }, LinearLayout.LayoutParams(dp(44), dp(38)))
 
         gradeText = textView(18f, true)
@@ -157,6 +175,35 @@ class OverlayService : Service(), LocationListener, TextToSpeech.OnInitListener 
         row.addView(micButton, LinearLayout.LayoutParams(0, dp(44), 1f))
         row.addView(resetButton, LinearLayout.LayoutParams(0, dp(44), 1f))
 
+        val hideButton = Button(this).apply {
+            text = "⏻ ENCERRAR / OCULTAR BOLHA"
+            setOnClickListener { hideUntilAppReopen() }
+        }
+
+        val decisionRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val acceptButton = Button(this).apply {
+            text = "✓ ACEITEI"
+            setOnClickListener { manualAccept() }
+        }
+        val rejectButton = Button(this).apply {
+            text = "✕ NÃO ACEITEI"
+            setOnClickListener { RideHistoryStore.rejectPending(this@OverlayService); speak("Oferta descartada.") }
+        }
+        decisionRow.addView(acceptButton, LinearLayout.LayoutParams(0, dp(44), 1f))
+        decisionRow.addView(rejectButton, LinearLayout.LayoutParams(0, dp(44), 1f))
+
+        val finishRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val finishButton = Button(this).apply {
+            text = "■ FINALIZAR"
+            setOnClickListener { manualComplete() }
+        }
+        val reportButton = Button(this).apply {
+            text = "📊 RELATÓRIO"
+            setOnClickListener { openReport() }
+        }
+        finishRow.addView(finishButton, LinearLayout.LayoutParams(0, dp(44), 1f))
+        finishRow.addView(reportButton, LinearLayout.LayoutParams(0, dp(44), 1f))
+
         details.addView(top)
         details.addView(gradeText)
         details.addView(moneyText)
@@ -166,7 +213,10 @@ class OverlayService : Service(), LocationListener, TextToSpeech.OnInitListener 
         details.addView(adviceText)
         details.addView(captureButton, full(top = 8))
         details.addView(autoButton, full(top = 4))
+        details.addView(decisionRow, full(top = 4))
+        details.addView(finishRow, full(top = 4))
         details.addView(row, full(top = 4))
+        details.addView(hideButton, full(top = 6))
         root.addView(details)
 
         params = WindowManager.LayoutParams(
@@ -247,6 +297,29 @@ class OverlayService : Service(), LocationListener, TextToSpeech.OnInitListener 
         startService(Intent(this, ScreenCaptureService::class.java).setAction(action))
     }
 
+    private fun manualAccept() {
+        val r = RideHistoryStore.confirmAccepted(this, "botao")
+        if (r != null) {
+            resetTrip()
+            consumptionSum = 0.0
+            consumptionSamples = 0
+            speak("Corrida aceita e adicionada ao relatório do dia.")
+        } else speak("Leia uma oferta primeiro.")
+    }
+
+    private fun manualComplete() {
+        val avg = if (consumptionSamples > 0) consumptionSum / consumptionSamples else RuntimeState.activeTripAvgConsumptionKml
+        val done = RideHistoryStore.completeActive(
+            this, RuntimeState.activeTripDistanceKm, RuntimeState.activeTripElapsedMinutes, avg, RuntimeState.settings
+        )
+        if (done != null) speak("Corrida finalizada. Resultado salvo no relatório do dia.")
+        else speak("Não há corrida aceita em andamento.")
+    }
+
+    private fun openReport() {
+        startActivity(Intent(this, ReportActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
     private fun toggleExpanded() {
         expanded = !expanded
         details.visibility = if (expanded) View.VISIBLE else View.GONE
@@ -259,6 +332,9 @@ class OverlayService : Service(), LocationListener, TextToSpeech.OnInitListener 
         tripStartElapsed = SystemClock.elapsedRealtime()
         lastLocation = null
         RuntimeState.tripAverageSpeedKmh = null
+        RuntimeState.activeTripDistanceKm = 0.0
+        RuntimeState.activeTripElapsedMinutes = 0.0
+        RuntimeState.activeTripAvgConsumptionKml = null
         RuntimeState.notifyChanged()
     }
 
@@ -272,8 +348,12 @@ class OverlayService : Service(), LocationListener, TextToSpeech.OnInitListener 
             null -> if (s.captureReady) Color.rgb(45, 105, 175) else Color.rgb(75, 75, 75)
         }
         bubble.background = circle(bubbleColor)
-        bubble.text = if (s.autoCaptureEnabled) "AUTO" else "📸"
-        bubble.textSize = if (s.autoCaptureEnabled) 12f else 25f
+        bubble.text = when {
+            s.activeRideRecordId != null -> "▶"
+            s.autoCaptureEnabled -> "AUTO"
+            else -> "📸"
+        }
+        bubble.textSize = if (s.autoCaptureEnabled && s.activeRideRecordId == null) 12f else 25f
 
         gradeText.text = when (grade) {
             RideGrade.GREEN -> "🟢 VERDE — VALE A META"
@@ -304,13 +384,14 @@ class OverlayService : Service(), LocationListener, TextToSpeech.OnInitListener 
         val avgNow = s.tripAverageSpeedKmh
         liveText.text = buildString {
             append("Consumo: %.1f km/L".format(usedConsumption))
-            if (req != null) append(" • alvo %.1f".format(req))
-            if (avgNeed != null) append("\nMédia-alvo: %.0f km/h".format(avgNeed))
+            if (req != null) append(" • necessário %.1f".format(req))
+            if (avgNeed != null) append("\nMédia necessária: %.0f km/h".format(avgNeed))
             if (avgNow != null) append(" • atual %.0f".format(avgNow))
             append("\n${s.obdStatus}")
         }
 
         captureStatusText.text = s.captureStatus + if (s.captureConfidence > 0) " • leitura ${s.captureConfidence}%" else ""
+        if (s.activeRideRecordId != null) captureStatusText.append("\n▶ ${s.trackingStatus}")
         autoButton.text = if (s.autoCaptureEnabled) "AUTO: LIGADO" else "AUTO: DESLIGADO"
 
         if (a != null) {
@@ -372,8 +453,19 @@ class OverlayService : Service(), LocationListener, TextToSpeech.OnInitListener 
             if (d in 0.2..150.0) tripDistanceMeters += d
         }
         lastLocation = location
-        val hours = (SystemClock.elapsedRealtime() - tripStartElapsed) / 3_600_000.0
+        val elapsedMs = SystemClock.elapsedRealtime() - tripStartElapsed
+        val hours = elapsedMs / 3_600_000.0
         if (hours > 0.001) RuntimeState.tripAverageSpeedKmh = (tripDistanceMeters / 1000.0) / hours
+        if (RuntimeState.activeRideRecordId != null) {
+            val c = RuntimeState.manualConsumptionOverrideKml ?: RuntimeState.obdConsumptionKml
+            if (c != null && c in 2.0..60.0) {
+                consumptionSum += c
+                consumptionSamples++
+                RuntimeState.activeTripAvgConsumptionKml = consumptionSum / consumptionSamples
+            }
+            RuntimeState.activeTripDistanceKm = tripDistanceMeters / 1000.0
+            RuntimeState.activeTripElapsedMinutes = elapsedMs / 60_000.0
+        }
         RuntimeState.notifyChanged()
     }
 
@@ -444,6 +536,30 @@ class OverlayService : Service(), LocationListener, TextToSpeech.OnInitListener 
 
     private fun speak(text: String) { tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "corrida-status") }
     override fun onInit(status: Int) { if (status == TextToSpeech.SUCCESS) tts?.language = Locale("pt", "BR") }
+
+    private fun hideUntilAppReopen() {
+        getSharedPreferences("overlay_control", MODE_PRIVATE)
+            .edit()
+            .putBoolean("reopen_on_next_app_open", true)
+            .apply()
+
+        // Encerra também a leitura contínua de tela para não gastar bateria
+        // depois que o motorista terminou o expediente. Ao reabrir o app, a
+        // bolha volta; a autorização de captura pode ser ativada novamente.
+        stopService(Intent(this, ScreenCaptureService::class.java))
+        RuntimeState.autoCaptureEnabled = false
+        RuntimeState.captureReady = false
+        RuntimeState.captureStatus = "Leitura de tela desligada"
+        RuntimeState.notifyChanged()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
+        stopSelf()
+    }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

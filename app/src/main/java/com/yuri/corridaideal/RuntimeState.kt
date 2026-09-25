@@ -19,7 +19,13 @@ data class LiveSnapshot(
     val autoCaptureEnabled: Boolean = false,
     val captureStatus: String = "Leitura de tela desligada",
     val captureConfidence: Int = 0,
-    val lastOcrText: String = ""
+    val lastOcrText: String = "",
+    val trackingStatus: String = "Nenhuma corrida em acompanhamento",
+    val activeRideRecordId: String? = null,
+    val activeTripDistanceKm: Double = 0.0,
+    val activeTripElapsedMinutes: Double = 0.0,
+    val activeTripAvgConsumptionKml: Double? = null,
+    val fuelLevelPercent: Double? = null
 )
 
 object RuntimeState {
@@ -38,13 +44,21 @@ object RuntimeState {
     @Volatile var captureStatus: String = "Leitura de tela desligada"
     @Volatile var captureConfidence: Int = 0
     @Volatile var lastOcrText: String = ""
+    @Volatile var trackingStatus: String = "Nenhuma corrida em acompanhamento"
+    @Volatile var activeRideRecordId: String? = null
+    @Volatile var activeTripDistanceKm: Double = 0.0
+    @Volatile var activeTripElapsedMinutes: Double = 0.0
+    @Volatile var activeTripAvgConsumptionKml: Double? = null
+    @Volatile var fuelLevelPercent: Double? = null
 
     private val listeners = CopyOnWriteArrayList<(LiveSnapshot) -> Unit>()
 
     fun snapshot() = LiveSnapshot(
         ride, settings, analysis, obdSpeedKmh, obdConsumptionKml, manualConsumptionOverrideKml,
         gpsSpeedKmh, tripAverageSpeedKmh, obdConnected, obdStatus,
-        captureReady, autoCaptureEnabled, captureStatus, captureConfidence, lastOcrText
+        captureReady, autoCaptureEnabled, captureStatus, captureConfidence, lastOcrText,
+        trackingStatus, activeRideRecordId, activeTripDistanceKm, activeTripElapsedMinutes,
+        activeTripAvgConsumptionKml, fuelLevelPercent
     )
 
     fun addListener(listener: (LiveSnapshot) -> Unit) {

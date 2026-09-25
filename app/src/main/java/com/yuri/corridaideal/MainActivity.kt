@@ -23,9 +23,11 @@ class MainActivity : Activity() {
     private lateinit var fuel: EditText
     private lateinit var baseConsumption: EditText
     private lateinit var bestConsumption: EditText
-    private lateinit var netPerKmTarget: EditText
+    private lateinit var grossPerKmTarget: EditText
     private lateinit var netPerHourTarget: EditText
     private lateinit var speedLimit: EditText
+    private lateinit var tankCapacity: EditText
+    private lateinit var trackingStatus: TextView
     private lateinit var result: TextView
     private lateinit var obdStatus: TextView
     private lateinit var obdSpinner: Spinner
@@ -44,6 +46,17 @@ class MainActivity : Activity() {
             if (::screenStatus.isInitialized) {
                 screenStatus.text = snap.captureStatus + if (snap.captureConfidence > 0) " • leitura ${snap.captureConfidence}%" else ""
             }
+            if (::trackingStatus.isInitialized) trackingStatus.text = snap.trackingStatus
+            // When OCR reads an Uber offer, mirror the exact values into the visible
+            // fields so the numbers on screen always match the analysis being shown.
+            if (snap.captureConfidence > 0) {
+                snap.ride?.let { r ->
+                    if (!fare.hasFocus()) fare.setText(decimal(r.fare))
+                    if (!pickup.hasFocus()) pickup.setText(decimal(r.pickupKm))
+                    if (!ride.hasFocus()) ride.setText(decimal(r.rideKm))
+                    if (!minutes.hasFocus()) minutes.setText(decimal(r.estimatedMinutes))
+                }
+            }
         }
     }
 
@@ -52,6 +65,10 @@ class MainActivity : Activity() {
         Locale.setDefault(Locale("pt", "BR"))
         setContentView(buildUi())
         loadPrefs()
+        RideHistoryStore.activeRecord(this)?.let {
+            RuntimeState.activeRideRecordId = it.id
+            RuntimeState.trackingStatus = "Corrida em andamento recuperada"
+        }
         requestRuntimePermissions()
         RuntimeState.addListener(stateListener)
         analyzeRide(silent = true)
@@ -62,6 +79,15 @@ class MainActivity : Activity() {
         populateBondedDevices()
         if (waitingOverlayPermission && Settings.canDrawOverlays(this)) {
             waitingOverlayPermission = false
+            startOverlay()
+            return
+        }
+
+        // Se o motorista ocultou a bolha pelo X/Encerrar, ela volta automaticamente
+        // somente quando o Corrida Ideal for aberto novamente.
+        val control = getSharedPreferences("overlay_control", MODE_PRIVATE)
+        if (control.getBoolean("reopen_on_next_app_open", false) && Settings.canDrawOverlays(this)) {
+            control.edit().putBoolean("reopen_on_next_app_open", false).apply()
             startOverlay()
         }
     }
@@ -113,10 +139,21 @@ class MainActivity : Activity() {
         root.addView(section("SEUS PARÂMETROS"))
         fuel = field(root, "Gasolina (R$/L)", "6,98")
         baseConsumption = field(root, "Consumo base do carro (km/L)", "12,6")
-        bestConsumption = field(root, "Melhor consumo realista (km/L)", "14,0")
-        netPerKmTarget = field(root, "Meta líquida mínima (R$/km)", "1,20")
-        netPerHourTarget = field(root, "Meta líquida mínima (R$/hora)", "35")
+        bestConsumption = field(root, "Melhor consumo realista (km/L)", "13,5")
+        grossPerKmTarget = field(root, "Meta VERDE bruta mínima (R$/km total)", "1,70")
+        root.addView(TextView(this).apply {
+            text = "Faixa amarela começa automaticamente em 80% da meta verde (com R$ 1,70, cerca de R$ 1,36/km)."
+            textSize = 12f
+            setPadding(0, 0, 0, dp(6))
+        })
+        netPerHourTarget = field(root, "Meta VERDE líquida mínima (R$/hora)", "35")
         speedLimit = field(root, "Teto de alerta de velocidade (km/h)", "60")
+        tankCapacity = field(root, "Capacidade do tanque (L) — opcional", "0")
+        root.addView(TextView(this).apply {
+            text = "Se informar a capacidade do tanque e o OBD disponibilizar nível de combustível, o relatório estima litros restantes e autonomia."
+            textSize = 12f
+            setPadding(0, 0, 0, dp(6))
+        })
 
         val save = Button(this).apply {
             text = "SALVAR PARÂMETROS"
@@ -155,6 +192,20 @@ class MainActivity : Activity() {
             text = "Bolha: toque = ler oferta • segure = abrir detalhes • arraste = mover. O modo AUTO fica dentro dos detalhes e é experimental. Voz fica como alternativa para consumo, limite e status."
             textSize = 12f
         })
+
+        trackingStatus = TextView(this).apply {
+            text = RuntimeState.trackingStatus
+            textSize = 13f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(0, dp(8), 0, dp(4))
+        }
+        root.addView(trackingStatus)
+
+        val reportButton = Button(this).apply {
+            text = "📊 RELATÓRIO DO DIA / ÚLTIMAS CORRIDAS"
+            setOnClickListener { startActivity(Intent(this@MainActivity, ReportActivity::class.java)) }
+        }
+        root.addView(reportButton, full(top = 6))
 
         val clearVoice = Button(this).apply {
             text = "Usar OBD/base novamente (tirar consumo falado)"
@@ -213,9 +264,9 @@ class MainActivity : Activity() {
 
         root.addView(section("COMO A DECISÃO É FEITA"))
         root.addView(TextView(this).apply {
-            text = "🟢 Verde: já bate suas metas líquidas por km e por hora.\n\n" +
-                "🟡 Amarela: ainda não bate, mas pode bater dentro do melhor consumo realista e do teto de velocidade configurado. O app mostra exatamente o km/L e a média necessários.\n\n" +
-                "🔴 Vermelha: para bater a meta exigiria consumo ou média de deslocamento fora do cenário que você definiu como realista.\n\n" +
+            text = "🟢 Verde: bate a meta BRUTA por km total e a meta LÍQUIDA por hora.\n\n" +
+                "🟡 Amarela: fica perto da meta ou pode bater com consumo/trânsito melhores, dentro do cenário realista.\n\n" +
+                "🔴 Vermelha: retorno por km/hora abaixo do aceitável ou cenário necessário fora do realista.\n\n" +
                 "A velocidade mostrada é uma média econômica/temporal. Nunca substitui o limite legal da via."
             textSize = 14f
         })
@@ -264,10 +315,11 @@ class MainActivity : Activity() {
         fuelPrice = num(fuel, 6.98),
         baseConsumptionKml = num(baseConsumption, 12.6),
         currentConsumptionKml = num(baseConsumption, 12.6),
-        bestRealisticConsumptionKml = num(bestConsumption, 14.0),
-        targetNetPerKm = num(netPerKmTarget, 1.20),
+        bestRealisticConsumptionKml = num(bestConsumption, 13.5),
+        targetGrossPerKm = num(grossPerKmTarget, 1.70),
         targetNetPerHour = num(netPerHourTarget, 35.0),
-        safetySpeedLimitKmh = num(speedLimit, 60.0)
+        safetySpeedLimitKmh = num(speedLimit, 60.0),
+        tankCapacityLiters = num(tankCapacity, 0.0)
     )
 
     private fun formatAnalysis(a: RideAnalysis): String {
@@ -284,13 +336,10 @@ class MainActivity : Activity() {
             append("Bruto: R$ %.2f/km • Líquido: R$ %.2f/km\n".format(a.grossPerKm, a.netPerKm))
             append("Líquido por hora: R$ %.2f/h\n".format(a.netPerHour))
             a.requiredConsumptionKml?.takeIf { it.isFinite() }?.let {
-                append("Consumo-alvo do par: %.1f km/L\n".format(it))
+                append("Consumo necessário no tempo atual: %.1f km/L\n".format(it))
             }
             a.requiredAverageSpeedKmh?.takeIf { it.isFinite() }?.let {
-                append("Média do par para virar verde: ≈ %.0f km/h\n".format(it))
-            }
-            a.minimumConsumptionForKmTargetKml?.takeIf { it.isFinite() }?.let {
-                append("Mínimo absoluto só para bater R$/km: %.1f km/L\n".format(it))
+                append("Média necessária com consumo-base: ≈ %.0f km/h\n".format(it))
             }
             a.maxMinutesForTarget?.takeIf { it.isFinite() }?.let {
                 append("Tempo máximo para bater R$/h: ≈ %.0f min\n".format(it))
@@ -363,10 +412,11 @@ class MainActivity : Activity() {
         val p = getSharedPreferences("settings", MODE_PRIVATE).edit()
         p.putFloat("fuel", num(fuel, 6.98).toFloat())
         p.putFloat("base", num(baseConsumption, 12.6).toFloat())
-        p.putFloat("best", num(bestConsumption, 14.0).toFloat())
-        p.putFloat("netkm", num(netPerKmTarget, 1.20).toFloat())
+        p.putFloat("best", num(bestConsumption, 13.5).toFloat())
+        p.putFloat("grosskm", num(grossPerKmTarget, 1.70).toFloat())
         p.putFloat("neth", num(netPerHourTarget, 35.0).toFloat())
         p.putFloat("limit", num(speedLimit, 60.0).toFloat())
+        p.putFloat("tank", num(tankCapacity, 0.0).toFloat())
         p.apply()
     }
 
@@ -374,10 +424,11 @@ class MainActivity : Activity() {
         val p = getSharedPreferences("settings", MODE_PRIVATE)
         fuel.setText(decimal(p.getFloat("fuel", 6.98f).toDouble()))
         baseConsumption.setText(decimal(p.getFloat("base", 12.6f).toDouble()))
-        bestConsumption.setText(decimal(p.getFloat("best", 14f).toDouble()))
-        netPerKmTarget.setText(decimal(p.getFloat("netkm", 1.20f).toDouble()))
+        bestConsumption.setText(decimal(p.getFloat("best", 13.5f).toDouble()))
+        grossPerKmTarget.setText(decimal(p.getFloat("grosskm", 1.70f).toDouble()))
         netPerHourTarget.setText(decimal(p.getFloat("neth", 35f).toDouble()))
         speedLimit.setText(decimal(p.getFloat("limit", 60f).toDouble()))
+        tankCapacity.setText(decimal(p.getFloat("tank", 0f).toDouble()))
     }
 
     private fun decimal(v: Double) = if (v % 1.0 == 0.0) "%.0f".format(v) else "%.2f".format(v).trimEnd('0')
