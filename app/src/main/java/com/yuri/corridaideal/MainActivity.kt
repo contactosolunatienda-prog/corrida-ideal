@@ -49,11 +49,16 @@ class MainActivity : Activity() {
             if (::readStatus.isInitialized) {
                 readStatus.text = when {
                     snap.captureReady -> "✓ TURNO ATIVO — abra a Uber e toque em ANALISAR quando surgir uma oferta.\n${snap.captureStatus}"
+                    snap.captureStatus == "ABRIR APP" -> "A sessão de leitura terminou. Toque em REATIVAR LEITURA antes da próxima oferta."
                     else -> "Leitura desligada. Toque em INICIAR TURNO antes de ficar online na Uber."
                 }
             }
             if (::startButton.isInitialized) {
-                startButton.text = if (snap.captureReady) "✓ TURNO ATIVO — MOSTRAR BOLHA" else "INICIAR TURNO"
+                startButton.text = when {
+                    snap.captureReady -> "✓ TURNO ATIVO — MOSTRAR BOLHA"
+                    snap.captureStatus == "ABRIR APP" -> "REATIVAR LEITURA"
+                    else -> "INICIAR TURNO"
+                }
             }
             if (::trackingStatus.isInitialized) trackingStatus.text = snap.trackingStatus
             if (snap.captureConfidence > 0) {
@@ -114,14 +119,14 @@ class MainActivity : Activity() {
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         })
         root.addView(TextView(this).apply {
-            text = "v0.5.3 — bolha e leitura no mesmo serviço, mais estável."
+            text = "v0.5.5 — revisão de estabilidade baseada no fluxo que já funcionava."
             textSize = 14f
             setPadding(0, dp(4), 0, dp(12))
         })
 
         root.addView(section("USO NA RUA"))
         root.addView(TextView(this).apply {
-            text = "Antes de ficar online: toque INICIAR TURNO e autorize a captura uma única vez. No Android 14+ o Corrida Ideal pede diretamente a tela inteira, sem escolher aplicativo específico. Depois ele abre a Uber e mantém uma única bolha ANALISAR. Toque nela quando surgir uma oferta: BOA, RAZOÁVEL ou RUIM."
+            text = "Antes de ficar online: toque INICIAR TURNO. No aviso do Android, escolha UM ÚNICO APP e selecione UBER. Aguarde a ativação terminar. Depois abra a Uber e use a bolha ANALISAR: BOA, RAZOÁVEL ou RUIM. Se aparecer REATIVAR, toque na bolha para voltar ao Corrida Ideal e toque REATIVAR LEITURA."
             textSize = 13f
             setPadding(0, 0, 0, dp(8))
         })
@@ -149,7 +154,7 @@ class MainActivity : Activity() {
         root.addView(readStatus)
 
         root.addView(TextView(this).apply {
-            text = "Bolha: 🚗 ANALISAR → 🟢 BOA / 🟡 RAZOÁVEL / 🔴 RUIM. Ela não tem mais botão × para evitar desaparecer por toque acidental. Encerre pelo botão ENCERRAR TURNO ou pela notificação."
+            text = "Bolha: 🚗 ANALISAR → 🟢 BOA / 🟡 RAZOÁVEL / 🔴 RUIM. Um toque faz uma única leitura. Se aparecer REATIVAR, abra o Corrida Ideal e reative antes de continuar."
             textSize = 13f
         })
 

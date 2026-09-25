@@ -37,3 +37,11 @@ Mantém o relatório do dia, histórico de ofertas analisadas e dados de combust
 
 ## v0.5.3
 Bolha e captura foram unificadas em um único serviço de primeiro plano para evitar desaparecimentos e travamentos. No Android 14+, a autorização solicita diretamente a tela inteira.
+
+
+## v0.5.4
+No Android 14+ escolha **Um único app > Uber** no consentimento de captura. O modo de tela inteira foi removido como padrão porque, neste aparelho, a sessão estava sendo encerrada ao alternar para a Uber. O botão REATIVAR agora reabre a autorização.
+
+## v0.5.5 — estabilidade antes de novos recursos
+
+A v0.5.5 volta ao caminho de autorização padrão do Android, não abre a Uber automaticamente e adiciona timeout para impedir que a bolha fique presa em LENDO. Consulte `VERSAO_0_5_5.md`.

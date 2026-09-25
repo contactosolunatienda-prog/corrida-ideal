@@ -26,6 +26,7 @@ import android.view.WindowManager
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
@@ -35,7 +36,7 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * v0.5.3: captura + bolha ficam no MESMO serviço em primeiro plano.
+ * v0.5.5: captura + bolha ficam no MESMO serviço em primeiro plano.
  * Isso elimina a disputa entre dois serviços e evita a bolha sumir quando o Android
  * encerra o antigo OverlayService.
  */
@@ -46,6 +47,8 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
     private val handler = Handler(Looper.getMainLooper())
     private val processing = AtomicBoolean(false)
     @Volatile private var captureRequested = false
+    private var captureTimeout: Runnable? = null
+    private var firstFrameSeen = false
 
     private var tts: TextToSpeech? = null
     private var ttsReady = false
@@ -98,8 +101,8 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
         }
 
         try {
+            // Ordem exigida pelo Android 14+: consentimento -> serviço em primeiro plano -> MediaProjection.
             promoteForeground()
-            ensureOverlayVisible()
 
             if (projection == null) {
                 val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
@@ -108,11 +111,28 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
                 p.registerCallback(object : MediaProjection.Callback() {
                     override fun onStop() {
                         handler.post {
+                            captureTimeout?.let { handler.removeCallbacks(it) }
+                            captureTimeout = null
+                            captureRequested = false
                             cleanupProjection(callStop = false)
                             RuntimeState.captureReady = false
-                            RuntimeState.captureStatus = "REATIVAR"
+                            RuntimeState.captureStatus = "ABRIR APP"
                             RuntimeState.notifyChanged()
                             render(RuntimeState.snapshot())
+                        }
+                    }
+
+                    override fun onCapturedContentVisibilityChanged(isVisible: Boolean) {
+                        handler.post {
+                            if (projection == null || processing.get() || captureRequested) return@post
+                            val next = if (isVisible) "PRONTO" else "ABRA A UBER"
+                            if (RuntimeState.captureStatus == "ATIVADO — abra a Uber" ||
+                                RuntimeState.captureStatus == "ABRA A UBER" ||
+                                RuntimeState.captureStatus == "PRONTO") {
+                                RuntimeState.captureStatus = next
+                                RuntimeState.notifyChanged()
+                                render(RuntimeState.snapshot())
+                            }
                         }
                     }
                 }, handler)
@@ -133,8 +153,9 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
 
             RuntimeState.captureReady = true
             RuntimeState.captureConfidence = 0
-            RuntimeState.captureStatus = "PRONTO"
+            RuntimeState.captureStatus = "ATIVADO — abra a Uber"
             RuntimeState.notifyChanged()
+            ensureOverlayVisible()
             render(RuntimeState.snapshot())
         } catch (t: Throwable) {
             failSession("Falha ao iniciar leitura")
@@ -144,9 +165,10 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
     private fun requestCapture() {
         if (projection == null || imageReader == null || !RuntimeState.captureReady) {
             RuntimeState.captureReady = false
-            RuntimeState.captureStatus = "REATIVAR"
+            RuntimeState.captureStatus = "ABRIR APP"
             RuntimeState.notifyChanged()
             render(RuntimeState.snapshot())
+            openMainForReactivation()
             return
         }
         if (processing.get() || captureRequested) return
@@ -158,10 +180,42 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
         // Esconde a própria bolha antes da captura para não encobrir números da oferta.
         root?.visibility = View.INVISIBLE
         handler.postDelayed({
+            if (projection == null || imageReader == null) {
+                root?.visibility = View.VISIBLE
+                RuntimeState.captureReady = false
+                RuntimeState.captureStatus = "ABRIR APP"
+                RuntimeState.notifyChanged()
+                render(RuntimeState.snapshot())
+                return@postDelayed
+            }
+
             captureRequested = true
-            // Caso a tela não gere um frame imediatamente, mostre a bolha novamente.
-            handler.postDelayed({ root?.visibility = View.VISIBLE }, 450L)
-        }, 120L)
+            captureTimeout?.let { handler.removeCallbacks(it) }
+            val timeout = Runnable {
+                if (captureRequested && !processing.get()) {
+                    captureRequested = false
+                    root?.visibility = View.VISIBLE
+                    RuntimeState.captureStatus = "TENTAR"
+                    RuntimeState.notifyChanged()
+                    render(RuntimeState.snapshot())
+                }
+            }
+            captureTimeout = timeout
+            handler.postDelayed(timeout, 1600L)
+        }, 100L)
+    }
+
+    private fun openMainForReactivation() {
+        // Não abre diretamente a tela de MediaProjection a partir do serviço em segundo plano.
+        // Em Androids recentes isso pode ser bloqueado. Abrimos a Activity principal; de lá o
+        // motorista toca em REATIVAR LEITURA e o pedido de consentimento é iniciado em primeiro plano.
+        runCatching {
+            startActivity(
+                Intent(this, MainActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            )
+        }
+        Toast.makeText(this, "Reative a leitura no Corrida Ideal", Toast.LENGTH_SHORT).show()
     }
 
     private fun onImageAvailable(reader: ImageReader, width: Int, height: Int) {
@@ -171,7 +225,16 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
         }
 
         val image = reader.acquireLatestImage() ?: return
+        captureTimeout?.let { handler.removeCallbacks(it) }
+        captureTimeout = null
         captureRequested = false
+        if (!firstFrameSeen) {
+            firstFrameSeen = true
+            if (RuntimeState.captureStatus == "ATIVADO — abra a Uber" || RuntimeState.captureStatus == "ABRA A UBER") {
+                RuntimeState.captureStatus = "PRONTO"
+                RuntimeState.notifyChanged()
+            }
+        }
         if (!processing.compareAndSet(false, true)) {
             image.close()
             return
@@ -370,12 +433,13 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
         val l = label ?: return
         val b = pill ?: return
         val (text, color) = when {
-            !s.captureReady || s.captureStatus == "REATIVAR" -> "REATIVAR" to Color.rgb(95, 95, 95)
+            !s.captureReady || s.captureStatus == "ABRIR APP" -> "REATIVAR" to Color.rgb(95, 95, 95)
             s.captureStatus == "LENDO" -> "LENDO…" to Color.rgb(42, 92, 145)
             s.captureStatus == "BOA" -> "BOA" to Color.rgb(22, 155, 75)
             s.captureStatus == "RAZOÁVEL" -> "RAZOÁVEL" to Color.rgb(203, 151, 20)
             s.captureStatus == "RUIM" -> "RUIM" to Color.rgb(194, 55, 55)
-            s.captureStatus == "NÃO LEU" || s.captureStatus == "TENTE NOVAMENTE" -> "TENTAR" to Color.rgb(120, 86, 32)
+            s.captureStatus == "NÃO LEU" || s.captureStatus == "TENTE NOVAMENTE" || s.captureStatus == "TENTAR" -> "TENTAR" to Color.rgb(120, 86, 32)
+            s.captureStatus == "ABRA A UBER" || s.captureStatus.startsWith("ATIVADO") -> "ANALISAR" to Color.rgb(42, 92, 145)
             else -> "ANALISAR" to Color.rgb(42, 92, 145)
         }
         l.text = text
@@ -484,6 +548,8 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).roundToInt()
 
     override fun onDestroy() {
+        captureTimeout?.let { handler.removeCallbacks(it) }
+        captureTimeout = null
         RuntimeState.removeListener(stateListener)
         RuntimeState.captureReady = false
         RuntimeState.captureStatus = "Leitura desligada"
@@ -504,7 +570,7 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_STOP = "com.yuri.corridaideal.SCREEN_STOP"
         const val EXTRA_RESULT_CODE = "resultCode"
         const val EXTRA_RESULT_DATA = "resultData"
-        const val CHANNEL_ID = "corrida_ideal_v053"
+        const val CHANNEL_ID = "corrida_ideal_v055"
         const val NOTIFICATION_ID = 45
     }
 }

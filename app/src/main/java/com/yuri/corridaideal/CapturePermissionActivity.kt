@@ -3,27 +3,33 @@ package com.yuri.corridaideal
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.widget.Toast
 
+/**
+ * Pede a autorização de captura usando o seletor PADRÃO do Android.
+ * Isso replica o caminho que já funcionou nas versões iniciais e, no Android 14+,
+ * deixa o próprio sistema oferecer Tela inteira ou Um único app.
+ */
 class CapturePermissionActivity : Activity() {
     private val requestCode = 9012
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
 
-        // Android 14+: força captura da tela inteira. Isso remove a escolha repetitiva
-        // entre "um aplicativo" e "tela inteira" que estava atrapalhando o uso na rua.
-        val captureIntent = if (Build.VERSION.SDK_INT >= 34) {
-            manager.createScreenCaptureIntent(MediaProjectionConfig.createConfigForDefaultDisplay())
-        } else {
-            manager.createScreenCaptureIntent()
-        }
-        startActivityForResult(captureIntent, requestCode)
+        Toast.makeText(
+            this,
+            "Escolha UM ÚNICO APP e selecione Uber. Faça isso antes de ficar online.",
+            Toast.LENGTH_LONG
+        ).show()
+
+        val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        // Não força nenhum modo. O Android decide a interface compatível com o aparelho.
+        startActivityForResult(manager.createScreenCaptureIntent(), requestCode)
     }
 
     @Deprecated("Kept for this minimal permission activity")
@@ -35,22 +41,22 @@ class CapturePermissionActivity : Activity() {
                 putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, resultCode)
                 putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, data)
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(service) else startService(service)
-            Toast.makeText(this, "Turno ativado. Abrindo a Uber…", Toast.LENGTH_SHORT).show()
 
-            // Volta direto para o Uber Driver, sem deixar o motorista preso no Corrida Ideal.
-            runCatching {
-                packageManager.getLaunchIntentForPackage("com.ubercab.driver")?.let { uber ->
-                    uber.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
-                    startActivity(uber)
-                }
-            }
+            // O serviço precisa consumir o token de projeção e entrar em primeiro plano
+            // antes de o app ser abandonado. Em alguns aparelhos, sair imediatamente daqui
+            // torna a sessão instável. Mantemos esta Activity viva por ~1,2 s.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(service) else startService(service)
+            Toast.makeText(this, "Ativando leitura… aguarde um instante.", Toast.LENGTH_SHORT).show()
+
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (!isFinishing) finish()
+            }, 1200L)
         } else {
             RuntimeState.captureStatus = "Autorização não concedida"
             RuntimeState.captureReady = false
             RuntimeState.notifyChanged()
             Toast.makeText(this, "Leitura não ativada", Toast.LENGTH_SHORT).show()
+            finish()
         }
-        finish()
     }
 }
