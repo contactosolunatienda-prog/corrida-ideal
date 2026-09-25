@@ -79,7 +79,7 @@ class MainActivity : Activity() {
         populateBondedDevices()
         if (waitingOverlayPermission && Settings.canDrawOverlays(this)) {
             waitingOverlayPermission = false
-            startOverlay()
+            startOverlay(startCapturePermission = true)
             return
         }
 
@@ -170,8 +170,8 @@ class MainActivity : Activity() {
 
         val overlayRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val startOverlay = Button(this).apply {
-            text = "ATIVAR BOLHA 📸"
-            setOnClickListener { startOverlay() }
+            text = "INICIAR BOLHA + LEITURA 📸"
+            setOnClickListener { startOverlay(startCapturePermission = true) }
         }
         val screen = Button(this).apply {
             text = "ATIVAR LEITURA"
@@ -348,7 +348,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun startOverlay() {
+    private fun startOverlay(startCapturePermission: Boolean = false) {
         if (!Settings.canDrawOverlays(this)) {
             val intent = Intent(
                 Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -363,6 +363,9 @@ class MainActivity : Activity() {
         val i = Intent(this, OverlayService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(i) else startService(i)
         Toast.makeText(this, "Painel flutuante ativado", Toast.LENGTH_SHORT).show()
+        if (startCapturePermission && !RuntimeState.captureReady) {
+            startActivity(Intent(this, CapturePermissionActivity::class.java))
+        }
     }
 
     private fun sendVoiceAction() {

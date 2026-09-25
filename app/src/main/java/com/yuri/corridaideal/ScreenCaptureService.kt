@@ -34,6 +34,8 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
     private var lastAutoAt = 0L
     private var lastOfferSignature = ""
     private var tts: TextToSpeech? = null
+    private var ttsReady = false
+    private var pendingSpeech: String? = null
     private val recognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
 
     override fun onCreate() {
@@ -72,7 +74,7 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
             }
             ACTION_STOP -> stopSelf()
         }
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     private fun startProjection(intent: Intent) {
@@ -152,18 +154,20 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
             .addOnSuccessListener { text ->
                 val raw = text.text
                 val parsed = ScreenOfferParser.parse(raw)
-                val screenState = ScreenStateDetector.detect(raw)
+                val screenState = runCatching { ScreenStateDetector.detect(raw) }.getOrDefault(UberScreenState.UNKNOWN)
                 RuntimeState.lastOcrText = raw
                 RuntimeState.captureConfidence = parsed.confidence
 
                 var lifecycleHandled = false
                 when (screenState) {
                     UberScreenState.COMPLETED -> {
-                        if (RideHistoryStore.activeRecord(this) != null) {
-                            val completed = RideHistoryStore.completeActive(
-                                this, RuntimeState.activeTripDistanceKm, RuntimeState.activeTripElapsedMinutes,
-                                RuntimeState.activeTripAvgConsumptionKml, RuntimeState.settings
-                            )
+                        if (runCatching { RideHistoryStore.activeRecord(this) }.getOrNull() != null) {
+                            val completed = runCatching {
+                                RideHistoryStore.completeActive(
+                                    this, RuntimeState.activeTripDistanceKm, RuntimeState.activeTripElapsedMinutes,
+                                    RuntimeState.activeTripAvgConsumptionKml, RuntimeState.settings
+                                )
+                            }.getOrNull()
                             if (completed != null) {
                                 RuntimeState.captureStatus = "Fim da corrida detectado — resultado salvo"
                                 speak("Corrida finalizada e salva no relatório do dia.")
@@ -172,8 +176,9 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
                         }
                     }
                     UberScreenState.TO_PICKUP, UberScreenState.ON_TRIP -> {
-                        if (RideHistoryStore.activeRecord(this) == null && RideHistoryStore.pendingOffer(this) != null) {
-                            val accepted = RideHistoryStore.confirmAccepted(this, "ocr")
+                        if (runCatching { RideHistoryStore.activeRecord(this) }.getOrNull() == null &&
+                            runCatching { RideHistoryStore.pendingOffer(this) }.getOrNull() != null) {
+                            val accepted = runCatching { RideHistoryStore.confirmAccepted(this, "ocr") }.getOrNull()
                             if (accepted != null) {
                                 RuntimeState.captureStatus = "Aceite detectado automaticamente — corrida no relatório"
                                 speak("Aceite detectado. Corrida adicionada ao relatório do dia.")
@@ -193,7 +198,7 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
                     RuntimeState.ride = parsed.ride
                     RuntimeState.manualConsumptionOverrideKml = null
                     RuntimeState.recalculate()
-                    RuntimeState.analysis?.let { RideHistoryStore.onOfferAnalyzed(this, parsed.ride, it) }
+                    RuntimeState.analysis?.let { a -> runCatching { RideHistoryStore.onOfferAnalyzed(this, parsed.ride, a) } }
                     if (!autoEnabled) {
                         autoEnabled = true
                         RuntimeState.autoCaptureEnabled = true
@@ -293,11 +298,22 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun speak(text: String) {
+        if (!ttsReady) {
+            pendingSpeech = text
+            return
+        }
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "screen-analysis")
     }
 
     override fun onInit(status: Int) {
-        if (status == TextToSpeech.SUCCESS) tts?.language = Locale("pt", "BR")
+        if (status == TextToSpeech.SUCCESS) {
+            tts?.language = Locale("pt", "BR")
+            ttsReady = true
+            pendingSpeech?.let { queued ->
+                pendingSpeech = null
+                tts?.speak(queued, TextToSpeech.QUEUE_FLUSH, null, "screen-analysis")
+            }
+        }
     }
 
     companion object {

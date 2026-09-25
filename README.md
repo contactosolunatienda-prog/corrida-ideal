@@ -1,5 +1,13 @@
 # Corrida Ideal — v0.4 Android
 
+## v0.4.2 — estabilidade no Android recente
+
+- Corrige reinício em loop dos serviços da bolha/captura quando o Android os encerra em segundo plano.
+- Isola histórico/relatório do núcleo OCR: um erro ao salvar relatório não interrompe a leitura nem a voz.
+- A voz agora aguarda o TTS ficar pronto antes de falar a primeira análise.
+- O botão principal inicia bolha e solicita a leitura de tela numa única sequência.
+
+
 Aplicativo auxiliar para motorista de app. Não acessa senha da Uber, não aceita/recusa corridas automaticamente e mantém a decisão com o motorista.
 
 ## Uso principal

@@ -44,6 +44,8 @@ class OverlayService : Service(), LocationListener, TextToSpeech.OnInitListener 
     private var locationManager: LocationManager? = null
     private var speechRecognizer: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
+    private var ttsReady = false
+    private var pendingSpeech: String? = null
     private var lastLocation: Location? = null
     private var tripDistanceMeters = 0.0
     private var tripStartElapsed = SystemClock.elapsedRealtime()
@@ -84,7 +86,7 @@ class OverlayService : Service(), LocationListener, TextToSpeech.OnInitListener 
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_LISTEN) listenNow()
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     private fun promoteForeground() {
@@ -534,8 +536,24 @@ class OverlayService : Service(), LocationListener, TextToSpeech.OnInitListener 
         return "Corrida $grade. %.2f reais líquidos por quilômetro e %.0f reais líquidos por hora.".format(a.netPerKm, a.netPerHour)
     }
 
-    private fun speak(text: String) { tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "corrida-status") }
-    override fun onInit(status: Int) { if (status == TextToSpeech.SUCCESS) tts?.language = Locale("pt", "BR") }
+    private fun speak(text: String) {
+        if (!ttsReady) {
+            pendingSpeech = text
+            return
+        }
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "corrida-status")
+    }
+
+    override fun onInit(status: Int) {
+        if (status == TextToSpeech.SUCCESS) {
+            tts?.language = Locale("pt", "BR")
+            ttsReady = true
+            pendingSpeech?.let { queued ->
+                pendingSpeech = null
+                tts?.speak(queued, TextToSpeech.QUEUE_FLUSH, null, "corrida-status")
+            }
+        }
+    }
 
     private fun hideUntilAppReopen() {
         getSharedPreferences("overlay_control", MODE_PRIVATE)
