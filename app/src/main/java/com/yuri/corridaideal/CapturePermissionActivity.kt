@@ -17,7 +17,7 @@ class CapturePermissionActivity : Activity() {
         startActivityForResult(manager.createScreenCaptureIntent(), requestCode)
     }
 
-    @Deprecated("Deprecated in Android API; kept here for the minimal Activity implementation")
+    @Deprecated("Kept for this minimal permission activity")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == this.requestCode && resultCode == RESULT_OK && data != null) {
@@ -27,9 +27,12 @@ class CapturePermissionActivity : Activity() {
                 putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, data)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(service) else startService(service)
-            Toast.makeText(this, "Leitura de tela ativada. Volte para a Uber e toque em 📸.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Turno ativado. Agora abra a Uber e use a bolha ANALISAR.", Toast.LENGTH_LONG).show()
         } else {
-            Toast.makeText(this, "Leitura de tela não autorizada", Toast.LENGTH_SHORT).show()
+            RuntimeState.captureStatus = "Autorização de leitura não concedida"
+            RuntimeState.captureReady = false
+            RuntimeState.notifyChanged()
+            Toast.makeText(this, "Leitura não ativada", Toast.LENGTH_SHORT).show()
         }
         finish()
     }

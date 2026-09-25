@@ -1,30 +1,35 @@
-# Corrida Ideal v0.5
+# Corrida Ideal — v0.5.2 Android
 
-Aplicativo auxiliar para motorista de app. Não usa login/senha da Uber e não aceita ou recusa corridas.
+Aplicativo auxiliar para motorista de app. Não acessa a senha da Uber e não aceita/recusa corridas automaticamente.
 
-## Objetivo da v0.5
-A prioridade é estabilidade. A leitura deixa de usar MediaProjection, que abria a tela de compartilhamento do Android e podia interromper a oferta. Agora o app usa um serviço de Acessibilidade limitado ao Uber Driver.
+## Uso rápido
 
-## Uso
-1. Abra o Corrida Ideal.
-2. Toque em **ATIVAR LEITURA AUTOMÁTICA**.
-3. Em Acessibilidade, ative **Corrida Ideal** uma única vez.
-4. Volte ao app e salve os parâmetros.
-5. Abra o Uber Driver.
-6. Ao aparecer uma oferta, o botão flutuante analisa automaticamente.
-7. Se necessário, toque no botão para forçar nova leitura.
+1. Antes de ficar online, abra Corrida Ideal e toque **INICIAR TURNO**.
+2. Permita **Exibir sobre outros apps** se o Android pedir.
+3. Autorize a captura da tela **uma vez para a sessão**.
+4. Abra Uber Driver.
+5. Quando surgir uma oferta, toque na bolha **ANALISAR**.
+6. O resultado fica na própria bolha: **BOA**, **RAZOÁVEL** ou **RUIM** e a voz fala somente essa avaliação.
 
-O botão usa apenas três resultados: **BOA**, **RAZOÁVEL** e **RUIM**. A voz fala apenas um desses três resultados.
+A bolha nunca abre a tela de autorização durante uma oferta. Se a sessão de leitura for encerrada pelo Android, ela muda para **ATIVAR NO APP**. Assim o motorista não é retirado da tela da Uber no meio de uma decisão.
 
-## Privacidade
-O serviço de Acessibilidade é configurado para o pacote `com.ubercab.driver`. O app não salva capturas de tela. Quando a leitura textual não basta, o OCR é processado no próprio aparelho.
+## Estabilidade
+
+A v0.5.2 remove o serviço de Acessibilidade usado na v0.5.1. O OCR não roda continuamente; ele só é executado quando o motorista toca na bolha. Isso reduz bastante CPU, memória e risco de travamento.
+
+## Fechar a bolha
+
+O `×` esconde somente a bolha. Se a sessão ainda estiver ativa, ao abrir Corrida Ideal de novo ela volta. Para encerrar tudo e economizar bateria, use **ENCERRAR TURNO** no app.
+
+## Parâmetros padrão
+
+- Gasolina: R$ 6,98/L
+- Consumo base: 12,6 km/L
+- Melhor consumo realista: 13,5 km/L
+- BOA: meta bruta mínima R$ 1,70/km total e meta líquida mínima R$ 35/h
+- RAZOÁVEL: começa em 80% da meta BOA ou cenário que ainda pode atingir a meta dentro dos parâmetros realistas
+- RUIM: abaixo do piso ou cenário fora do realista
 
 ## Relatório
-O histórico continua registrando ofertas analisadas e corridas identificadas como aceitas/concluídas. O relatório mostra bruto, combustível estimado, líquido, km, R$/km e R$/hora.
 
-## Observação
-Faça a ativação de Acessibilidade antes de ficar online. Não use uma oferta real como momento de configurar permissões.
-
-## v0.5.1 — estabilidade
-
-A leitura automática não executa OCR pesado a cada evento da Uber. Primeiro usa somente o texto de Acessibilidade; se necessário, um toque em `ANALISAR` faz um único screenshot via Accessibility API, sem abrir janela de compartilhamento. A voz diz apenas Boa/Razoável/Ruim. O ícone e o botão flutuante também foram redesenhados.
+Mantém o relatório do dia, histórico de ofertas analisadas e dados de combustível. O OBD2 continua opcional.
