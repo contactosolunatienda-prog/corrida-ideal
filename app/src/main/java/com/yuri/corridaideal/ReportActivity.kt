@@ -63,11 +63,11 @@ class ReportActivity : Activity() {
         })
 
         card("DECISÕES DO APP", buildString {
-            append("Ofertas analisadas: 🟢 ${r.analyzedGreen}  🟡 ${r.analyzedYellow}  🔴 ${r.analyzedRed}")
-            append("\nAceitas: 🟢 ${r.acceptedGreen}  🟡 ${r.acceptedYellow}  🔴 ${r.acceptedRed}")
+            append("Ofertas analisadas: 🟢 BOAS ${r.analyzedGreen}  🟡 RAZOÁVEIS ${r.analyzedYellow}  🔴 RUINS ${r.analyzedRed}")
+            append("\nAceitas: 🟢 BOAS ${r.acceptedGreen}  🟡 RAZOÁVEIS ${r.acceptedYellow}  🔴 RUINS ${r.acceptedRed}")
             if (r.recommendedCompleted > 0) {
                 val pct = 100.0 * r.recommendedHitGreenTarget / r.recommendedCompleted
-                append("\nIndicações verde/amarela que terminaram batendo a meta verde: ${r.recommendedHitGreenTarget}/${r.recommendedCompleted} (%.0f%%)".format(pct))
+                append("\nIndicações BOA/RAZOÁVEL que terminaram batendo a meta BOA: ${r.recommendedHitGreenTarget}/${r.recommendedCompleted} (%.0f%%)".format(pct))
             } else append("\nAinda não há corridas recomendadas concluídas para validar as indicações.")
         })
 

@@ -30,11 +30,20 @@ object ScreenOfferParser {
         val lines = cleaned.lines().map { it.trim() }.filter { it.isNotBlank() }
         val normalizedLines = lines.map { normalize(it) }
 
-        val moneyValues = moneyRegex.findAll(cleaned)
+        // Prefer the fare line itself. Uber may also show R$/km, bonus or extra values;
+        // those must not replace the actual offer value.
+        val cleanFareCandidates = lines.flatMap { line ->
+            val n = normalize(line)
+            val secondaryMoney = n.contains("/km") || n.contains("por km") ||
+                n.contains("incluido") || n.contains("bonus") || n.contains("promoc") || n.contains("extra")
+            if (secondaryMoney) emptyList()
+            else moneyRegex.findAll(line).mapNotNull { number(it.groupValues[1]) }.filter { it in 2.0..500.0 }.toList()
+        }
+        val allMoneyValues = moneyRegex.findAll(cleaned)
             .mapNotNull { number(it.groupValues[1]) }
             .filter { it in 2.0..500.0 }
             .toList()
-        val fare = moneyValues.maxOrNull()
+        val fare = cleanFareCandidates.maxOrNull() ?: allMoneyValues.maxOrNull()
 
         var pickupKm: Double? = null
         var rideKm: Double? = null

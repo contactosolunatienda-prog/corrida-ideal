@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Corrida Ideal</string>
+    <string name="accessibility_service_description">Lê somente a tela do Uber Driver para identificar ofertas e mostrar BOA, RAZOÁVEL ou RUIM. Não aceita nem recusa corridas.</string>
 </resources>

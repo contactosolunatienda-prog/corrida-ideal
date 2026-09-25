@@ -93,7 +93,10 @@ object RideHistoryStore {
         if (idx < 0) return null
         val old = records[idx]
         val distance = actualDistanceKm.takeIf { it > 0.05 } ?: old.offer.totalKm
-        val minutes = actualMinutes.takeIf { it > 0.5 } ?: old.offer.estimatedMinutes
+        val elapsedMinutes = ((completedAt - old.acceptedAt).coerceAtLeast(0L)) / 60000.0
+        val minutes = actualMinutes.takeIf { it > 0.5 }
+            ?: elapsedMinutes.takeIf { it > 0.5 }
+            ?: old.offer.estimatedMinutes
         val consumption = (averageConsumptionKml ?: settings.currentConsumptionKml).coerceAtLeast(0.1)
         val liters = distance / consumption
         val fuelCost = liters * settings.fuelPrice
