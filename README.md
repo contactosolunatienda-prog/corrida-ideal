@@ -1,4 +1,4 @@
-# Corrida Ideal — v0.5.2 Android
+# Corrida Ideal — v0.5.3 Android
 
 Aplicativo auxiliar para motorista de app. Não acessa a senha da Uber e não aceita/recusa corridas automaticamente.
 
@@ -15,7 +15,7 @@ A bolha nunca abre a tela de autorização durante uma oferta. Se a sessão de l
 
 ## Estabilidade
 
-A v0.5.2 remove o serviço de Acessibilidade usado na v0.5.1. O OCR não roda continuamente; ele só é executado quando o motorista toca na bolha. Isso reduz bastante CPU, memória e risco de travamento.
+A v0.5.3 remove o serviço de Acessibilidade usado na v0.5.1. O OCR não roda continuamente; ele só é executado quando o motorista toca na bolha. Isso reduz bastante CPU, memória e risco de travamento.
 
 ## Fechar a bolha
 
@@ -33,3 +33,7 @@ O `×` esconde somente a bolha. Se a sessão ainda estiver ativa, ao abrir Corri
 ## Relatório
 
 Mantém o relatório do dia, histórico de ofertas analisadas e dados de combustível. O OBD2 continua opcional.
+
+
+## v0.5.3
+Bolha e captura foram unificadas em um único serviço de primeiro plano para evitar desaparecimentos e travamentos. No Android 14+, a autorização solicita diretamente a tela inteira.

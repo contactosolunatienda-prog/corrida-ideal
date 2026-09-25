@@ -89,8 +89,10 @@ class MainActivity : Activity() {
             startShift()
             return
         }
-        // Se a sessão de leitura continua viva, reabrir o app apenas mostra a bolha de novo.
-        if (RuntimeState.captureReady && Settings.canDrawOverlays(this)) startOverlay()
+        // Se o turno ainda está ativo, apenas manda o próprio serviço de captura mostrar a bolha.
+        if (RuntimeState.captureReady && Settings.canDrawOverlays(this)) {
+            startService(Intent(this, ScreenCaptureService::class.java).setAction(ScreenCaptureService.ACTION_SHOW_BUBBLE))
+        }
     }
 
     override fun onDestroy() {
@@ -112,14 +114,14 @@ class MainActivity : Activity() {
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         })
         root.addView(TextView(this).apply {
-            text = "v0.5.2 — sessão única, leitura por toque e sem Acessibilidade."
+            text = "v0.5.3 — bolha e leitura no mesmo serviço, mais estável."
             textSize = 14f
             setPadding(0, dp(4), 0, dp(12))
         })
 
         root.addView(section("USO NA RUA"))
         root.addView(TextView(this).apply {
-            text = "Antes de ficar online: toque INICIAR TURNO e autorize a captura da tela uma única vez. Depois abra a Uber. Quando surgir uma oferta, toque na bolha ANALISAR. Ela não sai da Uber e responde só BOA, RAZOÁVEL ou RUIM. Se a sessão encerrar por qualquer motivo, a bolha NÃO abre permissão no meio da oferta; ela apenas mostra ATIVAR NO APP."
+            text = "Antes de ficar online: toque INICIAR TURNO e autorize a captura uma única vez. No Android 14+ o Corrida Ideal pede diretamente a tela inteira, sem escolher aplicativo específico. Depois ele abre a Uber e mantém uma única bolha ANALISAR. Toque nela quando surgir uma oferta: BOA, RAZOÁVEL ou RUIM."
             textSize = 13f
             setPadding(0, 0, 0, dp(8))
         })
@@ -128,8 +130,8 @@ class MainActivity : Activity() {
             text = "INICIAR TURNO"
             setOnClickListener {
                 if (RuntimeState.captureReady) {
-                    startOverlay()
-                    Toast.makeText(this@MainActivity, "Bolha mostrada. Volte para a Uber.", Toast.LENGTH_SHORT).show()
+                    startService(Intent(this@MainActivity, ScreenCaptureService::class.java).setAction(ScreenCaptureService.ACTION_SHOW_BUBBLE))
+                    Toast.makeText(this@MainActivity, "Bolha mostrada.", Toast.LENGTH_SHORT).show()
                 } else startShift()
             }
         }
@@ -147,7 +149,7 @@ class MainActivity : Activity() {
         root.addView(readStatus)
 
         root.addView(TextView(this).apply {
-            text = "Bolha: 🚗 ANALISAR → 🟢 BOA / 🟡 RAZOÁVEL / 🔴 RUIM. Toque no × para esconder apenas a bolha; a autorização da sessão continua ativa."
+            text = "Bolha: 🚗 ANALISAR → 🟢 BOA / 🟡 RAZOÁVEL / 🔴 RUIM. Ela não tem mais botão × para evitar desaparecer por toque acidental. Encerre pelo botão ENCERRAR TURNO ou pela notificação."
             textSize = 13f
         })
 
@@ -238,20 +240,14 @@ class MainActivity : Activity() {
             Toast.makeText(this, "Ative 'Exibir sobre outros apps'. Depois volte ao Corrida Ideal.", Toast.LENGTH_LONG).show()
             return
         }
-        startOverlay()
         if (!RuntimeState.captureReady) {
             startActivity(Intent(this, CapturePermissionActivity::class.java))
+        } else {
+            startService(Intent(this, ScreenCaptureService::class.java).setAction(ScreenCaptureService.ACTION_SHOW_BUBBLE))
         }
     }
 
-    private fun startOverlay() {
-        if (!Settings.canDrawOverlays(this)) return
-        val i = Intent(this, OverlayService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(i) else startService(i)
-    }
-
     private fun stopShift() {
-        stopService(Intent(this, OverlayService::class.java))
         stopService(Intent(this, ScreenCaptureService::class.java).setAction(ScreenCaptureService.ACTION_STOP))
         RuntimeState.captureReady = false
         RuntimeState.captureStatus = "Leitura de tela desligada"
