@@ -1,51 +1,42 @@
-# Corrida Ideal — v0.5.3 Android
+# Corrida Ideal — v0.6.0 Android
 
-Aplicativo auxiliar para motorista de app. Não acessa a senha da Uber e não aceita/recusa corridas automaticamente.
+Aplicativo auxiliar para motorista. Não usa senha da Uber e não aceita/recusa corridas automaticamente.
 
-## Uso rápido
+## O que mudou de verdade
 
-1. Antes de ficar online, abra Corrida Ideal e toque **INICIAR TURNO**.
-2. Permita **Exibir sobre outros apps** se o Android pedir.
-3. Autorize a captura da tela **uma vez para a sessão**.
-4. Abra Uber Driver.
-5. Quando surgir uma oferta, toque na bolha **ANALISAR**.
-6. O resultado fica na própria bolha: **BOA**, **RAZOÁVEL** ou **RUIM** e a voz fala somente essa avaliação.
+A v0.6.0 abandona completamente MediaProjection/gravação de tela, porque no aparelho de teste a sessão era encerrada ao sair do Corrida Ideal e entrar na Uber.
 
-A bolha nunca abre a tela de autorização durante uma oferta. Se a sessão de leitura for encerrada pelo Android, ela muda para **ATIVAR NO APP**. Assim o motorista não é retirado da tela da Uber no meio de uma decisão.
+Agora o motor usa um **Serviço de Acessibilidade** restrito ao pacote do Uber Driver. O Android mantém esse serviço disponível quando a Uber está na frente. A captura acontece somente quando o motorista toca na bolha **ANALISAR**.
 
-## Estabilidade
+## Ativação uma única vez
 
-A v0.5.3 remove o serviço de Acessibilidade usado na v0.5.1. O OCR não roda continuamente; ele só é executado quando o motorista toca na bolha. Isso reduz bastante CPU, memória e risco de travamento.
+1. Instale e abra Corrida Ideal.
+2. Toque **ATIVAR LEITURA EM ACESSIBILIDADE**.
+3. Ative **Corrida Ideal — leitura da Uber**.
+4. Se o Android bloquear a opção por ser APK instalado fora da Play Store, abra **Informações do app > ⋮ > Permitir configurações restritas** e volte à Acessibilidade.
+5. Abra Uber Driver. A bolha aparece sobre a Uber.
+6. Quando surgir oferta, toque **ANALISAR**.
 
-## Fechar a bolha
+Não existe mais autorização "gravar tela", "toda a tela", "um único app" nem botão REATIVAR.
 
-O `×` esconde somente a bolha. Se a sessão ainda estiver ativa, ao abrir Corrida Ideal de novo ela volta. Para encerrar tudo e economizar bateria, use **ENCERRAR TURNO** no app.
+## Privacidade e comportamento
+
+- O serviço recebe eventos somente do pacote `com.ubercab.driver`.
+- A captura é feita somente quando o motorista toca na bolha.
+- O app não toca em botões da Uber, não aceita e não recusa corridas.
+- O OCR roda localmente com ML Kit.
 
 ## Parâmetros padrão
 
-- Gasolina: R$ 6,98/L
+- Gasolina: R$ 6,88/L
 - Consumo base: 12,6 km/L
 - Melhor consumo realista: 13,5 km/L
-- BOA: meta bruta mínima R$ 1,70/km total e meta líquida mínima R$ 35/h
-- RAZOÁVEL: começa em 80% da meta BOA ou cenário que ainda pode atingir a meta dentro dos parâmetros realistas
-- RUIM: abaixo do piso ou cenário fora do realista
+- BOA: pelo menos **R$ 1,25/km depois do combustível** E **R$ 35/h depois do combustível**
+- RAZOÁVEL: pelo menos 80% das duas metas
+- RUIM: abaixo dessa faixa
 
-## Relatório
+Sempre usa **km total = km até buscar + km da viagem**.
 
-Mantém o relatório do dia, histórico de ofertas analisadas e dados de combustível. O OBD2 continua opcional.
+## OBD2
 
-
-## v0.5.3
-Bolha e captura foram unificadas em um único serviço de primeiro plano para evitar desaparecimentos e travamentos. No Android 14+, a autorização solicita diretamente a tela inteira.
-
-
-## v0.5.4
-No Android 14+ escolha **Um único app > Uber** no consentimento de captura. O modo de tela inteira foi removido como padrão porque, neste aparelho, a sessão estava sendo encerrada ao alternar para a Uber. O botão REATIVAR agora reabre a autorização.
-
-## v0.5.5 — estabilidade antes de novos recursos
-
-A v0.5.5 volta ao caminho de autorização padrão do Android, não abre a Uber automaticamente e adiciona timeout para impedir que a bolha fique presa em LENDO. Consulte `VERSAO_0_5_5.md`.
-
-## v0.5.6 — núcleo estável restaurado
-
-A v0.5.6 volta à arquitetura de dois serviços da versão 0.2, que já funcionou no aparelho de teste. A captura MediaProjection fica isolada no serviço em primeiro plano e a bolha fica em um serviço separado. Não há Acessibilidade, não há OCR contínuo e não há abertura automática da Uber.
+Continua opcional. Não é necessário para analisar uma oferta.

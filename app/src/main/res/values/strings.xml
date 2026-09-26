@@ -1,4 +1,4 @@
 <resources>
     <string name="app_name">Corrida Ideal</string>
-    <string name="accessibility_service_description">Lê somente a tela do Uber Driver para identificar ofertas e mostrar BOA, RAZOÁVEL ou RUIM. Não aceita nem recusa corridas.</string>
+    <string name="accessibility_service_description">O Corrida Ideal usa a acessibilidade somente no Uber Driver para ler uma oferta quando você toca na bolha ANALISAR. A leitura calcula valor, distância e tempo e responde BOA, RAZOÁVEL ou RUIM. O app não aceita, recusa nem toca em corridas por você.</string>
 </resources>

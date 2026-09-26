@@ -10,16 +10,15 @@ data class RideInput(
 }
 
 data class AppSettings(
-    val fuelPrice: Double = 6.98,
+    val fuelPrice: Double = 6.88,
     val baseConsumptionKml: Double = 12.6,
     val currentConsumptionKml: Double = 12.6,
     val bestRealisticConsumptionKml: Double = 13.5,
-    /** Green target based on the fare divided by ALL km (pickup + trip). */
-    val targetGrossPerKm: Double = 1.70,
-    /** Green target after estimated fuel cost. */
+    /** Meta principal: quanto deve sobrar por km depois do combustível estimado. */
+    val targetNetPerKm: Double = 1.25,
+    /** Meta de retorno por hora depois do combustível estimado. */
     val targetNetPerHour: Double = 35.0,
     val safetySpeedLimitKmh: Double = 60.0,
-    /** Optional. Leave 0 when unknown; enables OBD fuel-range estimates. */
     val tankCapacityLiters: Double = 0.0
 )
 
@@ -33,9 +32,7 @@ data class RideAnalysis(
     val grossPerKm: Double,
     val netPerKm: Double,
     val netPerHour: Double,
-    /** km/L needed to hit the hourly green target if the current ETA stays unchanged. */
     val requiredConsumptionKml: Double?,
-    /** Average displacement speed needed to hit the hourly target at base consumption. */
     val requiredAverageSpeedKmh: Double?,
     val maxMinutesForTarget: Double?,
     val reason: String

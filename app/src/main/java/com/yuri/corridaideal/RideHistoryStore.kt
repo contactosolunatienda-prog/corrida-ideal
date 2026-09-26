@@ -157,7 +157,7 @@ object RideHistoryStore {
         val netPerHour = if (mins > 0.0) net / (mins / 60.0) else null
         val recommended = completed.filter { it.gradeAtOffer != RideGrade.RED }
         val hit = recommended.count {
-            (it.actualGrossPerKm ?: 0.0) >= settings.targetGrossPerKm &&
+            (it.actualNetPerKm ?: 0.0) >= settings.targetNetPerKm &&
                 (it.actualNetPerHour ?: 0.0) >= settings.targetNetPerHour
         }
         val fuelPct = RuntimeState.fuelLevelPercent

@@ -1,6 +1,7 @@
 package com.yuri.corridaideal
 
 import android.Manifest
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.Activity
 import android.bluetooth.BluetoothAdapter
 import android.content.Intent
@@ -11,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.ViewGroup
+import android.view.accessibility.AccessibilityManager
 import android.widget.*
 import java.util.Locale
 
@@ -22,7 +24,7 @@ class MainActivity : Activity() {
     private lateinit var fuel: EditText
     private lateinit var baseConsumption: EditText
     private lateinit var bestConsumption: EditText
-    private lateinit var grossPerKmTarget: EditText
+    private lateinit var netPerKmTarget: EditText
     private lateinit var netPerHourTarget: EditText
     private lateinit var speedLimit: EditText
     private lateinit var tankCapacity: EditText
@@ -34,7 +36,6 @@ class MainActivity : Activity() {
     private lateinit var trackingStatus: TextView
     private val obdAddresses = mutableListOf<String>()
     private var connectObdAfterPermission = false
-    private var waitingOverlayPermission = false
 
     private val stateListener: (LiveSnapshot) -> Unit = { snap ->
         runOnUiThread {
@@ -46,22 +47,9 @@ class MainActivity : Activity() {
                 }
             }
             snap.analysis?.let { if (::result.isInitialized) result.text = formatAnalysis(it) }
-            if (::readStatus.isInitialized) {
-                readStatus.text = when {
-                    snap.captureReady -> "✓ TURNO ATIVO — abra a Uber e toque em ANALISAR quando surgir uma oferta.\n${snap.captureStatus}"
-                    snap.captureStatus == "ABRIR APP" -> "A sessão de leitura terminou. Toque em REATIVAR LEITURA antes da próxima oferta."
-                    else -> "Leitura desligada. Toque em INICIAR TURNO antes de ficar online na Uber."
-                }
-            }
-            if (::startButton.isInitialized) {
-                startButton.text = when {
-                    snap.captureReady -> "✓ TURNO ATIVO — MOSTRAR BOLHA"
-                    snap.captureStatus == "ABRIR APP" -> "REATIVAR LEITURA"
-                    else -> "INICIAR TURNO"
-                }
-            }
             if (::trackingStatus.isInitialized) trackingStatus.text = snap.trackingStatus
-            if (snap.captureConfidence > 0) {
+            refreshAccessibilityStatus()
+            if (snap.captureConfidence > 0 && ::fare.isInitialized) {
                 snap.ride?.let { r ->
                     if (!fare.hasFocus()) fare.setText(decimal(r.fare))
                     if (!pickup.hasFocus()) pickup.setText(decimal(r.pickupKm))
@@ -78,10 +66,6 @@ class MainActivity : Activity() {
         setContentView(buildUi())
         loadPrefs()
         RuntimeState.settings = currentSettings()
-        RideHistoryStore.activeRecord(this)?.let {
-            RuntimeState.activeRideRecordId = it.id
-            RuntimeState.trackingStatus = "Corrida em andamento recuperada"
-        }
         RuntimeState.addListener(stateListener)
         analyzeRide(silent = true)
     }
@@ -89,15 +73,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         populateBondedDevices()
-        if (waitingOverlayPermission && Settings.canDrawOverlays(this)) {
-            waitingOverlayPermission = false
-            startShift()
-            return
-        }
-        // Se o turno ainda está ativo, apenas manda o próprio serviço de captura mostrar a bolha.
-        if (RuntimeState.captureReady && Settings.canDrawOverlays(this)) {
-            startService(Intent(this, OverlayService::class.java))
-        }
+        refreshAccessibilityStatus()
     }
 
     override fun onDestroy() {
@@ -119,50 +95,61 @@ class MainActivity : Activity() {
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         })
         root.addView(TextView(this).apply {
-            text = "v0.5.6 — núcleo de captura restaurado da versão que funcionava."
+            text = "v0.6.0 — novo motor sem gravação de tela"
             textSize = 14f
             setPadding(0, dp(4), 0, dp(12))
         })
 
-        root.addView(section("USO NA RUA"))
+        root.addView(section("ATIVAÇÃO — FAZER UMA ÚNICA VEZ"))
         root.addView(TextView(this).apply {
-            text = "Antes de ficar online: toque INICIAR TURNO e autorize a captura. Depois abra a Uber normalmente. A captura roda em um serviço separado da bolha, como na versão inicial que já funcionou neste aparelho. Quando surgir uma oferta, toque em ANALISAR: BOA, RAZOÁVEL ou RUIM."
-            textSize = 13f
+            text = "Esta versão NÃO usa gravar/compartilhar tela. Ative o serviço Corrida Ideal em Acessibilidade uma vez. Depois abra a Uber normalmente. A bolha ANALISAR aparece sobre a Uber e continua funcionando mesmo com o Corrida Ideal fechado. Ela só tira uma captura quando você toca nela e não aceita nem recusa corrida."
+            textSize = 14f
             setPadding(0, 0, 0, dp(8))
         })
 
         startButton = Button(this).apply {
-            text = "INICIAR TURNO"
+            text = "ATIVAR LEITURA EM ACESSIBILIDADE"
             setOnClickListener {
-                if (RuntimeState.captureReady) {
-                    startService(Intent(this@MainActivity, OverlayService::class.java))
-                    Toast.makeText(this@MainActivity, "Bolha mostrada.", Toast.LENGTH_SHORT).show()
-                } else startShift()
+                if (isAccessibilityEnabled()) openUber() else openAccessibilitySettings()
             }
         }
         root.addView(startButton, full())
 
         root.addView(Button(this).apply {
-            text = "ENCERRAR TURNO"
-            setOnClickListener { stopShift() }
+            text = "SE ESTIVER BLOQUEADO: ABRIR INFORMAÇÕES DO APP"
+            setOnClickListener {
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+                Toast.makeText(
+                    this@MainActivity,
+                    "No menu ⋮, toque em 'Permitir configurações restritas'. Depois volte e ative em Acessibilidade.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
         }, full(top = 6))
 
         readStatus = TextView(this).apply {
-            textSize = 13f
+            textSize = 14f
             setPadding(0, dp(8), 0, dp(4))
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
         }
         root.addView(readStatus)
 
+        root.addView(Button(this).apply {
+            text = "ABRIR UBER"
+            setOnClickListener { openUber() }
+        }, full(top = 6))
+
         root.addView(TextView(this).apply {
-            text = "Bolha: 🚗 ANALISAR → 🟢 BOA / 🟡 RAZOÁVEL / 🔴 RUIM. Um toque faz uma única leitura. Se aparecer REATIVAR, abra o Corrida Ideal e reative antes de continuar."
+            text = "Uso na rua: abra a Uber → espere a oferta aparecer → toque uma vez em ANALISAR. Resultado: 🟢 BOA / 🟡 RAZOÁVEL / 🔴 RUIM + voz curta. Não existe mais botão REATIVAR nem autorização de gravação de tela."
             textSize = 13f
+            setPadding(0, dp(6), 0, 0)
         })
 
         trackingStatus = TextView(this).apply {
             text = RuntimeState.trackingStatus
             textSize = 13f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setPadding(0, dp(8), 0, dp(4))
+            setPadding(0, dp(10), 0, dp(4))
         }
         root.addView(trackingStatus)
 
@@ -191,15 +178,15 @@ class MainActivity : Activity() {
         root.addView(result, full(top = 10))
 
         root.addView(section("SEUS PARÂMETROS"))
-        fuel = field(root, "Gasolina (R$/L)", "6,98")
+        fuel = field(root, "Gasolina (R$/L)", "6,88")
         baseConsumption = field(root, "Consumo base do carro (km/L)", "12,6")
         bestConsumption = field(root, "Melhor consumo realista (km/L)", "13,5")
-        grossPerKmTarget = field(root, "Meta BOA bruta mínima (R$/km total)", "1,70")
+        netPerKmTarget = field(root, "Meta BOA após gasolina (R$/km total)", "1,25")
         root.addView(TextView(this).apply {
-            text = "A faixa RAZOÁVEL começa automaticamente em 80% da meta BOA."
+            text = "O km total é busca + viagem. A faixa RAZOÁVEL começa em 80% das metas."
             textSize = 12f
         })
-        netPerHourTarget = field(root, "Meta BOA líquida mínima (R$/hora)", "35")
+        netPerHourTarget = field(root, "Meta BOA após gasolina (R$/hora)", "35")
         speedLimit = field(root, "Teto de referência de velocidade (km/h)", "60")
         tankCapacity = field(root, "Capacidade do tanque (L) — opcional", "0")
 
@@ -210,7 +197,7 @@ class MainActivity : Activity() {
 
         root.addView(section("OBD2 BLUETOOTH — OPCIONAL"))
         root.addView(TextView(this).apply {
-            text = "O OBD não é necessário para analisar a oferta. Ele serve apenas para melhorar consumo e relatório."
+            text = "O OBD não é necessário para analisar a oferta. Ele serve para melhorar o consumo e os relatórios."
             textSize = 13f
         })
         obdSpinner = Spinner(this)
@@ -236,30 +223,40 @@ class MainActivity : Activity() {
         return scroll
     }
 
-    private fun startShift() {
-        RuntimeState.settings = currentSettings()
-        savePrefs()
-        if (!Settings.canDrawOverlays(this)) {
-            waitingOverlayPermission = true
-            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
-            Toast.makeText(this, "Ative 'Exibir sobre outros apps'. Depois volte ao Corrida Ideal.", Toast.LENGTH_LONG).show()
-            return
+    private fun refreshAccessibilityStatus() {
+        if (!::readStatus.isInitialized || !::startButton.isInitialized) return
+        val enabled = isAccessibilityEnabled()
+        val running = UberAccessibilityService.instance != null
+        readStatus.text = when {
+            running -> "✓ LEITURA ATIVA — abra a Uber. A bolha aparece quando a Uber estiver na frente."
+            enabled -> "✓ ACESSIBILIDADE AUTORIZADA — abra a Uber. O serviço será iniciado pelo Android."
+            else -> "LEITURA DESATIVADA — ative 'Corrida Ideal' nas configurações de Acessibilidade."
         }
-        if (!RuntimeState.captureReady) {
-            startActivity(Intent(this, CapturePermissionActivity::class.java))
-        } else {
-            startService(Intent(this, OverlayService::class.java))
+        startButton.text = if (enabled) "✓ LEITURA ATIVA — ABRIR UBER" else "ATIVAR LEITURA EM ACESSIBILIDADE"
+    }
+
+    private fun isAccessibilityEnabled(): Boolean {
+        val manager = getSystemService(ACCESSIBILITY_SERVICE) as AccessibilityManager
+        return manager.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK).any { info ->
+            val service = info.resolveInfo?.serviceInfo
+            service?.packageName == packageName &&
+                (service.name == UberAccessibilityService::class.java.name || service.name.endsWith(".UberAccessibilityService"))
         }
     }
 
-    private fun stopShift() {
-        stopService(Intent(this, OverlayService::class.java))
-        stopService(Intent(this, ScreenCaptureService::class.java).setAction(ScreenCaptureService.ACTION_STOP))
-        RuntimeState.captureReady = false
-        RuntimeState.captureStatus = "Leitura de tela desligada"
-        RuntimeState.captureConfidence = 0
-        RuntimeState.notifyChanged()
-        Toast.makeText(this, "Turno encerrado", Toast.LENGTH_SHORT).show()
+    private fun openAccessibilitySettings() {
+        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        Toast.makeText(this, "Procure Corrida Ideal e ative o serviço.", Toast.LENGTH_LONG).show()
+    }
+
+    private fun openUber() {
+        val intent = packageManager.getLaunchIntentForPackage(UberAccessibilityService.UBER_PACKAGE)
+        if (intent == null) {
+            Toast.makeText(this, "Uber Driver não encontrado neste aparelho.", Toast.LENGTH_LONG).show()
+            return
+        }
+        intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+        startActivity(intent)
     }
 
     private fun analyzeRide(silent: Boolean = false) {
@@ -279,11 +276,11 @@ class MainActivity : Activity() {
     }
 
     private fun currentSettings() = AppSettings(
-        fuelPrice = num(fuel, 6.98),
+        fuelPrice = num(fuel, 6.88),
         baseConsumptionKml = num(baseConsumption, 12.6),
         currentConsumptionKml = num(baseConsumption, 12.6),
         bestRealisticConsumptionKml = num(bestConsumption, 13.5),
-        targetGrossPerKm = num(grossPerKmTarget, 1.70),
+        targetNetPerKm = num(netPerKmTarget, 1.25),
         targetNetPerHour = num(netPerHourTarget, 35.0),
         safetySpeedLimitKmh = num(speedLimit, 60.0),
         tankCapacityLiters = num(tankCapacity, 0.0)
@@ -298,9 +295,11 @@ class MainActivity : Activity() {
         return buildString {
             append("$title\n")
             append("Distância total: %.1f km\n".format(a.totalKm))
-            append("Bruto: R$ %.2f/km • Líquido: R$ %.2f/km\n".format(a.grossPerKm, a.netPerKm))
-            append("Líquido por hora: R$ %.2f/h\n".format(a.netPerHour))
             append("Combustível estimado: R$ %.2f\n".format(a.fuelCost))
+            append("Após gasolina: R$ %.2f\n".format(a.netValue))
+            append("Bruto: R$ %.2f/km • após gasolina: R$ %.2f/km\n".format(a.grossPerKm, a.netPerKm))
+            append("Após gasolina por hora: R$ %.2f/h\n".format(a.netPerHour))
+            append("\n${a.reason}")
         }
     }
 
@@ -326,8 +325,11 @@ class MainActivity : Activity() {
         if (requestCode == 500 && connectObdAfterPermission) {
             connectObdAfterPermission = false
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-                populateBondedDevices(); connectSelectedObd()
-            } else Toast.makeText(this, "Bluetooth não autorizado. O OBD continua opcional.", Toast.LENGTH_SHORT).show()
+                populateBondedDevices()
+                connectSelectedObd()
+            } else {
+                Toast.makeText(this, "Bluetooth não autorizado. O OBD continua opcional.", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -342,16 +344,19 @@ class MainActivity : Activity() {
             obdAddresses.add(it.address)
             "${it.name ?: "Bluetooth"} • ${it.address}"
         }
-        obdSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item,
-            if (labels.isEmpty()) listOf("Nenhum dispositivo pareado") else labels)
+        obdSpinner.adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            if (labels.isEmpty()) listOf("Nenhum dispositivo pareado") else labels
+        )
     }
 
     private fun savePrefs() {
         getSharedPreferences("settings", MODE_PRIVATE).edit()
-            .putFloat("fuel", num(fuel, 6.98).toFloat())
+            .putFloat("fuel", num(fuel, 6.88).toFloat())
             .putFloat("base", num(baseConsumption, 12.6).toFloat())
             .putFloat("best", num(bestConsumption, 13.5).toFloat())
-            .putFloat("grosskm", num(grossPerKmTarget, 1.70).toFloat())
+            .putFloat("netkm", num(netPerKmTarget, 1.25).toFloat())
             .putFloat("neth", num(netPerHourTarget, 35.0).toFloat())
             .putFloat("limit", num(speedLimit, 60.0).toFloat())
             .putFloat("tank", num(tankCapacity, 0.0).toFloat())
@@ -360,17 +365,20 @@ class MainActivity : Activity() {
 
     private fun loadPrefs() {
         val p = getSharedPreferences("settings", MODE_PRIVATE)
-        fuel.setText(decimal(p.getFloat("fuel", 6.98f).toDouble()))
+        fuel.setText(decimal(p.getFloat("fuel", 6.88f).toDouble()))
         baseConsumption.setText(decimal(p.getFloat("base", 12.6f).toDouble()))
         bestConsumption.setText(decimal(p.getFloat("best", 13.5f).toDouble()))
-        grossPerKmTarget.setText(decimal(p.getFloat("grosskm", 1.70f).toDouble()))
+        // Migração: versões antigas salvavam meta bruta em grosskm. A nova versão
+        // começa com a meta líquida desejada de R$ 1,25/km.
+        netPerKmTarget.setText(decimal(p.getFloat("netkm", 1.25f).toDouble()))
         netPerHourTarget.setText(decimal(p.getFloat("neth", 35f).toDouble()))
         speedLimit.setText(decimal(p.getFloat("limit", 60f).toDouble()))
         tankCapacity.setText(decimal(p.getFloat("tank", 0f).toDouble()))
     }
 
     private fun section(text: String) = TextView(this).apply {
-        this.text = text; textSize = 14f
+        this.text = text
+        textSize = 14f
         setTypeface(typeface, android.graphics.Typeface.BOLD)
         setTextColor(Color.DKGRAY)
         setPadding(0, dp(20), 0, dp(6))
@@ -378,7 +386,8 @@ class MainActivity : Activity() {
 
     private fun field(parent: LinearLayout, label: String, initial: String): EditText {
         val e = EditText(this).apply {
-            hint = label; setText(initial)
+            hint = label
+            setText(initial)
             inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
             setSelectAllOnFocus(true)
         }
