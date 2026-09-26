@@ -58,3 +58,6 @@ Continua opcional. A análise funciona usando o consumo-base configurado mesmo s
 ## Histórico
 
 A infraestrutura de relatório das versões anteriores foi mantida para registrar ofertas analisadas. A prioridade desta versão é a estabilidade do fluxo de leitura; detecção automática de aceite/fim de corrida não participa do caminho crítico da captura.
+
+## v1.0.1 — correção de build
+Se o projeto foi atualizado sobre versões antigas pelo botão **Upload files** do GitHub, arquivos que não existem no ZIP novo podem permanecer no repositório. A v0.6.0 deixou `app/src/main/res/xml/accessibility_service_config.xml`; a v1.0.1 sobrescreve esse arquivo com um recurso inerte e válido para impedir falha do AAPT. Nenhum AccessibilityService é registrado no Manifest.
