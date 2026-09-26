@@ -24,8 +24,10 @@ import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * v0.5.6: volta ao núcleo de captura da versão 0.2, que já funcionou no aparelho.
- * A captura fica em um FGS mediaProjection independente da bolha.
+ * Núcleo de captura v1.0.0.
+ *
+ * Baseado no fluxo da v0.2: serviço de MediaProjection separado do painel.
+ * Não há captura automática, não há AccessibilityService e não há troca automática de app.
  */
 class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
     private var projection: MediaProjection? = null
@@ -62,9 +64,6 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun startProjection(intent: Intent) {
-        promoteForeground()
-        cleanupProjection(callStop = true)
-
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
         @Suppress("DEPRECATION")
         val resultData = if (Build.VERSION.SDK_INT >= 33) {
@@ -72,11 +71,15 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
         } else intent.getParcelableExtra(EXTRA_RESULT_DATA)
 
         if (resultCode != Activity.RESULT_OK || resultData == null) {
-            failSession("Autorização de leitura inválida")
+            setNotReady("Leitura não autorizada")
             return
         }
 
         try {
+            // Android 14+: consentimento -> foreground service -> getMediaProjection.
+            promoteForeground()
+            stopProjectionOnly(callStop = true)
+
             val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             val p = manager.getMediaProjection(resultCode, resultData)
             projection = p
@@ -86,10 +89,9 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
                         captureTimeout?.let { handler.removeCallbacks(it) }
                         captureTimeout = null
                         captureRequested = false
-                        cleanupProjection(callStop = false)
-                        RuntimeState.captureReady = false
-                        RuntimeState.captureStatus = "REATIVAR"
-                        RuntimeState.notifyChanged()
+                        stopProjectionOnly(callStop = false)
+                        setNotReady("Leitura encerrada")
+                        stopSelf()
                     }
                 }
             }, handler)
@@ -97,30 +99,31 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
             val (width, height, density) = displayInfo()
             imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3)
             virtualDisplay = p.createVirtualDisplay(
-                "CorridaIdealScreen",
+                "CorridaIdealV1",
                 width, height, density,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                 imageReader!!.surface,
                 null,
                 handler
             )
-            imageReader!!.setOnImageAvailableListener({ reader -> onImageAvailable(reader, width, height) }, handler)
+
+            imageReader!!.setOnImageAvailableListener({ reader ->
+                onImageAvailable(reader, width, height)
+            }, handler)
 
             RuntimeState.captureReady = true
             RuntimeState.captureConfidence = 0
             RuntimeState.captureStatus = "PRONTO"
             RuntimeState.notifyChanged()
-
-        } catch (t: Throwable) {
-            failSession("Falha ao iniciar leitura")
+        } catch (_: Throwable) {
+            setNotReady("Leitura não iniciou")
         }
     }
 
     private fun requestCapture() {
         if (projection == null || imageReader == null || !RuntimeState.captureReady) {
-            RuntimeState.captureReady = false
-            RuntimeState.captureStatus = "REATIVAR"
-            RuntimeState.notifyChanged()
+            setNotReady("Leitura desligada")
+            stopSelf()
             return
         }
         if (processing.get() || captureRequested) return
@@ -138,7 +141,7 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
             }
         }
         captureTimeout = timeout
-        handler.postDelayed(timeout, 1800L)
+        handler.postDelayed(timeout, 1600L)
     }
 
     private fun onImageAvailable(reader: ImageReader, width: Int, height: Int) {
@@ -148,9 +151,9 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
         }
 
         val image = reader.acquireLatestImage() ?: return
-        captureRequested = false
         captureTimeout?.let { handler.removeCallbacks(it) }
         captureTimeout = null
+        captureRequested = false
 
         if (!processing.compareAndSet(false, true)) {
             image.close()
@@ -168,13 +171,14 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
             bitmap.copyPixelsFromBuffer(buffer)
             image.close()
 
-            val cropped = if (bmpWidth != width) Bitmap.createBitmap(bitmap, 0, 0, width, height) else bitmap
-            if (cropped !== bitmap) bitmap.recycle()
+            val cropped = if (bmpWidth != width) {
+                Bitmap.createBitmap(bitmap, 0, 0, width, height).also { bitmap.recycle() }
+            } else bitmap
             processBitmap(cropped)
-        } catch (t: Throwable) {
+        } catch (_: Throwable) {
             runCatching { image.close() }
             processing.set(false)
-            RuntimeState.captureStatus = "TENTE NOVAMENTE"
+            RuntimeState.captureStatus = "TENTAR"
             RuntimeState.notifyChanged()
         }
     }
@@ -217,6 +221,7 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
                 }
                 .addOnFailureListener {
                     RuntimeState.captureStatus = "NÃO LEU"
+                    RuntimeState.captureConfidence = 0
                     RuntimeState.notifyChanged()
                     speak("Não consegui ler")
                 }
@@ -224,19 +229,29 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
                     runCatching { bitmap.recycle() }
                     processing.set(false)
                 }
-        } catch (t: Throwable) {
+        } catch (_: Throwable) {
             runCatching { bitmap.recycle() }
             processing.set(false)
-            RuntimeState.captureStatus = "TENTE NOVAMENTE"
+            RuntimeState.captureStatus = "TENTAR"
+            RuntimeState.captureConfidence = 0
             RuntimeState.notifyChanged()
         }
     }
 
-    private fun speakGrade(grade: RideGrade) = speak(when (grade) {
-        RideGrade.GREEN -> "Corrida boa"
-        RideGrade.YELLOW -> "Corrida razoável"
-        RideGrade.RED -> "Corrida ruim"
-    })
+    private fun setNotReady(status: String) {
+        RuntimeState.captureReady = false
+        RuntimeState.captureStatus = status
+        RuntimeState.captureConfidence = 0
+        RuntimeState.notifyChanged()
+    }
+
+    private fun speakGrade(grade: RideGrade) = speak(
+        when (grade) {
+            RideGrade.GREEN -> "Corrida boa"
+            RideGrade.YELLOW -> "Corrida razoável"
+            RideGrade.RED -> "Corrida ruim"
+        }
+    )
 
     private fun speak(text: String) {
         if (ttsReady) tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "corrida-grade")
@@ -254,6 +269,17 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun displayInfo(): Triple<Int, Int, Int> {
+        val wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        val metrics = resources.displayMetrics
+        return if (Build.VERSION.SDK_INT >= 30) {
+            val bounds = wm.currentWindowMetrics.bounds
+            Triple(bounds.width(), bounds.height(), metrics.densityDpi)
+        } else {
+            Triple(metrics.widthPixels, metrics.heightPixels, metrics.densityDpi)
+        }
+    }
+
     private fun promoteForeground() {
         val open = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java),
@@ -265,42 +291,29 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
         )
         val notification = Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_status_car)
-            .setContentTitle("Corrida Ideal — turno ativo")
-            .setContentText("Leitura pronta; use a bolha sobre a Uber")
+            .setContentTitle("Corrida Ideal — leitura ativa")
+            .setContentText("Captura pronta; imagens são processadas no aparelho")
             .setContentIntent(open)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Encerrar turno", stop)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Desligar leitura", stop)
             .setOngoing(true)
             .build()
 
         if (Build.VERSION.SDK_INT >= 29) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-        } else startForeground(NOTIFICATION_ID, notification)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
     }
 
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             getSystemService(NotificationManager::class.java).createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Corrida Ideal", NotificationManager.IMPORTANCE_LOW)
+                NotificationChannel(CHANNEL_ID, "Corrida Ideal — leitura", NotificationManager.IMPORTANCE_LOW)
             )
         }
     }
 
-    private fun displayInfo(): Triple<Int, Int, Int> {
-        val wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        val metrics = resources.displayMetrics
-        return if (Build.VERSION.SDK_INT >= 30) {
-            val bounds = wm.currentWindowMetrics.bounds
-            Triple(bounds.width(), bounds.height(), metrics.densityDpi)
-        } else Triple(metrics.widthPixels, metrics.heightPixels, metrics.densityDpi)
-    }
-
-    private fun failSession(message: String) {
-        RuntimeState.captureReady = false
-        RuntimeState.captureStatus = message
-        RuntimeState.notifyChanged()
-    }
-
-    private fun cleanupProjection(callStop: Boolean = true) {
+    private fun stopProjectionOnly(callStop: Boolean) {
         imageReader?.setOnImageAvailableListener(null, null)
         runCatching { virtualDisplay?.release() }
         runCatching { imageReader?.close() }
@@ -314,11 +327,9 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
     override fun onDestroy() {
         captureTimeout?.let { handler.removeCallbacks(it) }
         captureTimeout = null
-        RuntimeState.captureReady = false
-        RuntimeState.captureStatus = "Leitura desligada"
-        RuntimeState.notifyChanged()
-        cleanupProjection(callStop = true)
-        stopService(Intent(this, OverlayService::class.java))
+        captureRequested = false
+        setNotReady("Leitura desligada")
+        stopProjectionOnly(callStop = true)
         runCatching { recognizer.close() }
         tts?.stop()
         tts?.shutdown()
@@ -331,7 +342,7 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_STOP = "com.yuri.corridaideal.SCREEN_STOP"
         const val EXTRA_RESULT_CODE = "resultCode"
         const val EXTRA_RESULT_DATA = "resultData"
-        const val CHANNEL_ID = "corrida_ideal_v056"
+        const val CHANNEL_ID = "corrida_ideal_screen_v1"
         const val NOTIFICATION_ID = 45
     }
 }

@@ -11,8 +11,8 @@ android {
         applicationId = "com.yuri.corridaideal"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "0.6.0"
+        versionCode = 20
+        versionName = "1.0.0"
     }
 
     buildTypes {
@@ -29,7 +29,6 @@ android {
         jvmTarget = "17"
     }
 }
-
 
 dependencies {
     implementation("com.google.mlkit:text-recognition:16.0.1")

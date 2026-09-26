@@ -53,13 +53,13 @@ class ReportActivity : Activity() {
             if (r.activeCount > 0) append(" • em andamento: ${r.activeCount}")
             append("\nBruto: R$ %.2f".format(r.grossRevenue))
             append("\nCombustível: %.2f L • R$ %.2f".format(r.fuelLiters, r.fuelCost))
-            append("\nLíquido após combustível: R$ %.2f".format(r.netRevenue))
+            append("\nApós gasolina: R$ %.2f".format(r.netRevenue))
             append("\nDistância real/estimada: %.1f km".format(r.totalKm))
             append("\nBusca planejada: %.1f km • viagem: %.1f km".format(r.pickupKmPlanned, r.rideKmPlanned))
             r.averageConsumptionKml?.let { append("\nConsumo médio: %.1f km/L".format(it)) }
             r.grossPerKm?.let { append("\nBruto médio: R$ %.2f/km".format(it)) }
-            r.netPerKm?.let { append("\nLíquido médio: R$ %.2f/km".format(it)) }
-            r.netPerHour?.let { append("\nLíquido médio: R$ %.2f/h".format(it)) }
+            r.netPerKm?.let { append("\nApós gasolina: R$ %.2f/km".format(it)) }
+            r.netPerHour?.let { append("\nApós gasolina: R$ %.2f/h".format(it)) }
         })
 
         card("DECISÕES DO APP", buildString {
@@ -99,7 +99,7 @@ class ReportActivity : Activity() {
                     if (record.status == RideRecordStatus.COMPLETED) {
                         append("\nReal: %.1f km • %.0f min".format(record.actualDistanceKm ?: record.offer.totalKm, record.actualMinutes ?: record.offer.estimatedMinutes))
                         record.averageConsumptionKml?.let { append(" • %.1f km/L".format(it)) }
-                        append("\nBruto/km R$ %.2f • líquido/km R$ %.2f • líquido/h R$ %.0f".format(
+                        append("\nBruto/km R$ %.2f • após gasolina/km R$ %.2f • após gasolina/h R$ %.0f".format(
                             record.actualGrossPerKm ?: 0.0, record.actualNetPerKm ?: 0.0, record.actualNetPerHour ?: 0.0
                         ))
                     }

@@ -1,42 +1,60 @@
-# Corrida Ideal — v0.6.0 Android
+# Corrida Ideal v1.0.0 — reconstrução estável
 
-Aplicativo auxiliar para motorista. Não usa senha da Uber e não aceita/recusa corridas automaticamente.
+Esta versão foi refeita sobre o **fluxo de captura da v0.2**, que foi a primeira versão que funcionou de verdade no aparelho durante o uso da Uber.
 
-## O que mudou de verdade
+## Objetivo principal
 
-A v0.6.0 abandona completamente MediaProjection/gravação de tela, porque no aparelho de teste a sessão era encerrada ao sair do Corrida Ideal e entrar na Uber.
+Analisar uma oferta da Uber sem o motorista sair da tela da Uber e responder apenas:
 
-Agora o motor usa um **Serviço de Acessibilidade** restrito ao pacote do Uber Driver. O Android mantém esse serviço disponível quando a Uber está na frente. A captura acontece somente quando o motorista toca na bolha **ANALISAR**.
+- **BOA**
+- **RAZOÁVEL**
+- **RUIM**
 
-## Ativação uma única vez
+A voz fala somente “Corrida boa”, “Corrida razoável” ou “Corrida ruim”.
 
-1. Instale e abra Corrida Ideal.
-2. Toque **ATIVAR LEITURA EM ACESSIBILIDADE**.
-3. Ative **Corrida Ideal — leitura da Uber**.
-4. Se o Android bloquear a opção por ser APK instalado fora da Play Store, abra **Informações do app > ⋮ > Permitir configurações restritas** e volte à Acessibilidade.
-5. Abra Uber Driver. A bolha aparece sobre a Uber.
-6. Quando surgir oferta, toque **ANALISAR**.
+## O que mudou em relação às versões problemáticas
 
-Não existe mais autorização "gravar tela", "toda a tela", "um único app" nem botão REATIVAR.
-
-## Privacidade e comportamento
-
-- O serviço recebe eventos somente do pacote `com.ubercab.driver`.
-- A captura é feita somente quando o motorista toca na bolha.
-- O app não toca em botões da Uber, não aceita e não recusa corridas.
-- O OCR roda localmente com ML Kit.
+- não usa AccessibilityService;
+- não usa leitura automática contínua;
+- painel e captura voltaram a ser **dois serviços separados**, como no desenho que funcionou na v0.2;
+- a captura não é iniciada dentro do Corrida Ideal para depois trocar de app;
+- o fluxo recomendado é: **abrir o painel → ir para Uber → ativar a leitura já por cima da Uber → analisar**;
+- não abre a Uber automaticamente;
+- não tenta reaproveitar silenciosamente uma sessão encerrada;
+- não existe o antigo botão “REATIVAR”; se a sessão acabar, o painel mostra **ATIVAR LEITURA**;
+- painel flutuante maior e sempre visível, em vez de uma bolha minúscula;
+- o painel desaparece por alguns instantes durante a captura para não encobrir os dados da oferta;
+- timeout de captura evita ficar preso eternamente em “LENDO”.
 
 ## Parâmetros padrão
 
-- Gasolina: R$ 6,88/L
-- Consumo base: 12,6 km/L
-- Melhor consumo realista: 13,5 km/L
-- BOA: pelo menos **R$ 1,25/km depois do combustível** E **R$ 35/h depois do combustível**
-- RAZOÁVEL: pelo menos 80% das duas metas
-- RUIM: abaixo dessa faixa
+- gasolina: **R$ 6,88/L**;
+- consumo-base: **12,6 km/L**;
+- melhor consumo realista: **13,5 km/L**;
+- meta BOA: **R$ 1,25/km depois da gasolina**, usando km até buscar + km da viagem;
+- meta BOA: **R$ 35/h depois da gasolina**;
+- RAZOÁVEL começa em 80% dessas metas;
+- abaixo disso: RUIM.
 
-Sempre usa **km total = km até buscar + km da viagem**.
+## Uso na rua
+
+1. Abra Corrida Ideal.
+2. Toque **ATIVAR JANELA FLUTUANTE**.
+3. Abra a Uber.
+4. Já com a Uber aberta, toque **ATIVAR LEITURA** na janela do Corrida Ideal.
+5. No aviso do Android, autorize a captura. **Tudo na tela** é o modo recomendado para este fluxo.
+6. O aviso fecha e você volta para a Uber.
+7. Quando a oferta aparecer, toque **ANALISAR**.
+8. O painel mostra BOA / RAZOÁVEL / RUIM e fala somente esse resultado.
+
+## Privacidade
+
+A captura é processada localmente pelo ML Kit. O app não envia a imagem da tela para servidor e não aceita ou recusa corridas automaticamente.
 
 ## OBD2
 
-Continua opcional. Não é necessário para analisar uma oferta.
+Continua opcional. A análise funciona usando o consumo-base configurado mesmo sem OBD.
+
+## Histórico
+
+A infraestrutura de relatório das versões anteriores foi mantida para registrar ofertas analisadas. A prioridade desta versão é a estabilidade do fluxo de leitura; detecção automática de aceite/fim de corrida não participa do caminho crítico da captura.

@@ -45,10 +45,10 @@ object RideEconomics {
             RideGrade.GREEN ->
                 "Depois do combustível, bate R$ %.2f/km e R$ %.0f/h ou mais.".format(kmTarget, hourTarget)
             RideGrade.YELLOW ->
-                "Ficou perto da meta: líquido R$ %.2f/km e R$ %.0f/h. Meta BOA: R$ %.2f/km e R$ %.0f/h."
+                "Ficou perto da meta: após gasolina R$ %.2f/km e R$ %.0f/h. Meta BOA: R$ %.2f/km e R$ %.0f/h."
                     .format(netPerKm, netPerHour, kmTarget, hourTarget)
             RideGrade.RED ->
-                "Ficou abaixo da faixa mínima: líquido R$ %.2f/km e R$ %.0f/h."
+                "Ficou abaixo da faixa mínima: após gasolina R$ %.2f/km e R$ %.0f/h."
                     .format(netPerKm, netPerHour)
         }
 
