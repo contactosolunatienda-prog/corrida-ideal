@@ -5,9 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
-import android.graphics.Color
 import android.graphics.PixelFormat
-import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
@@ -17,28 +15,17 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import android.provider.Settings
 import android.speech.tts.TextToSpeech
-import android.view.Gravity
-import android.view.MotionEvent
-import android.view.View
 import android.view.WindowManager
-import android.widget.ImageView
-import android.widget.LinearLayout
-import android.widget.TextView
-import android.widget.Toast
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.math.abs
-import kotlin.math.roundToInt
 
 /**
- * v0.5.5: captura + bolha ficam no MESMO serviço em primeiro plano.
- * Isso elimina a disputa entre dois serviços e evita a bolha sumir quando o Android
- * encerra o antigo OverlayService.
+ * v0.5.6: volta ao núcleo de captura da versão 0.2, que já funcionou no aparelho.
+ * A captura fica em um FGS mediaProjection independente da bolha.
  */
 class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
     private var projection: MediaProjection? = null
@@ -48,26 +35,16 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
     private val processing = AtomicBoolean(false)
     @Volatile private var captureRequested = false
     private var captureTimeout: Runnable? = null
-    private var firstFrameSeen = false
 
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private var queuedSpeech: String? = null
     private val recognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
 
-    private var windowManager: WindowManager? = null
-    private var root: LinearLayout? = null
-    private var pill: LinearLayout? = null
-    private var label: TextView? = null
-    private var params: WindowManager.LayoutParams? = null
-
-    private val stateListener: (LiveSnapshot) -> Unit = { snap -> handler.post { render(snap) } }
-
     override fun onCreate() {
         super.onCreate()
         createChannel()
         tts = TextToSpeech(this, this)
-        RuntimeState.addListener(stateListener)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -76,19 +53,18 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
         when (intent?.action) {
             ACTION_START -> startProjection(intent)
             ACTION_CAPTURE_ONCE -> requestCapture()
-            ACTION_SHOW_BUBBLE -> ensureOverlayVisible()
-            ACTION_HIDE_BUBBLE -> root?.visibility = View.GONE
             ACTION_STOP -> {
                 stopSelf()
                 return START_NOT_STICKY
             }
         }
-        // A autorização do MediaProjection não pode ser recriada silenciosamente depois
-        // que o processo morre, então não tentamos reiniciar o serviço sem consentimento.
         return START_NOT_STICKY
     }
 
     private fun startProjection(intent: Intent) {
+        promoteForeground()
+        cleanupProjection(callStop = true)
+
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
         @Suppress("DEPRECATION")
         val resultData = if (Build.VERSION.SDK_INT >= 33) {
@@ -101,62 +77,40 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
         }
 
         try {
-            // Ordem exigida pelo Android 14+: consentimento -> serviço em primeiro plano -> MediaProjection.
-            promoteForeground()
-
-            if (projection == null) {
-                val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                val p = manager.getMediaProjection(resultCode, resultData)
-                projection = p
-                p.registerCallback(object : MediaProjection.Callback() {
-                    override fun onStop() {
-                        handler.post {
-                            captureTimeout?.let { handler.removeCallbacks(it) }
-                            captureTimeout = null
-                            captureRequested = false
-                            cleanupProjection(callStop = false)
-                            RuntimeState.captureReady = false
-                            RuntimeState.captureStatus = "ABRIR APP"
-                            RuntimeState.notifyChanged()
-                            render(RuntimeState.snapshot())
-                        }
+            val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            val p = manager.getMediaProjection(resultCode, resultData)
+            projection = p
+            p.registerCallback(object : MediaProjection.Callback() {
+                override fun onStop() {
+                    handler.post {
+                        captureTimeout?.let { handler.removeCallbacks(it) }
+                        captureTimeout = null
+                        captureRequested = false
+                        cleanupProjection(callStop = false)
+                        RuntimeState.captureReady = false
+                        RuntimeState.captureStatus = "REATIVAR"
+                        RuntimeState.notifyChanged()
                     }
+                }
+            }, handler)
 
-                    override fun onCapturedContentVisibilityChanged(isVisible: Boolean) {
-                        handler.post {
-                            if (projection == null || processing.get() || captureRequested) return@post
-                            val next = if (isVisible) "PRONTO" else "ABRA A UBER"
-                            if (RuntimeState.captureStatus == "ATIVADO — abra a Uber" ||
-                                RuntimeState.captureStatus == "ABRA A UBER" ||
-                                RuntimeState.captureStatus == "PRONTO") {
-                                RuntimeState.captureStatus = next
-                                RuntimeState.notifyChanged()
-                                render(RuntimeState.snapshot())
-                            }
-                        }
-                    }
-                }, handler)
-
-                val (width, height, density) = displayInfo()
-                imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3)
-                virtualDisplay = p.createVirtualDisplay(
-                    "CorridaIdealSession",
-                    width, height, density,
-                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                    imageReader!!.surface,
-                    null,
-                    handler
-                )
-
-                imageReader!!.setOnImageAvailableListener({ reader -> onImageAvailable(reader, width, height) }, handler)
-            }
+            val (width, height, density) = displayInfo()
+            imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3)
+            virtualDisplay = p.createVirtualDisplay(
+                "CorridaIdealScreen",
+                width, height, density,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                imageReader!!.surface,
+                null,
+                handler
+            )
+            imageReader!!.setOnImageAvailableListener({ reader -> onImageAvailable(reader, width, height) }, handler)
 
             RuntimeState.captureReady = true
             RuntimeState.captureConfidence = 0
-            RuntimeState.captureStatus = "ATIVADO — abra a Uber"
+            RuntimeState.captureStatus = "PRONTO"
             RuntimeState.notifyChanged()
-            ensureOverlayVisible()
-            render(RuntimeState.snapshot())
+
         } catch (t: Throwable) {
             failSession("Falha ao iniciar leitura")
         }
@@ -165,57 +119,26 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
     private fun requestCapture() {
         if (projection == null || imageReader == null || !RuntimeState.captureReady) {
             RuntimeState.captureReady = false
-            RuntimeState.captureStatus = "ABRIR APP"
+            RuntimeState.captureStatus = "REATIVAR"
             RuntimeState.notifyChanged()
-            render(RuntimeState.snapshot())
-            openMainForReactivation()
             return
         }
         if (processing.get() || captureRequested) return
 
+        captureRequested = true
         RuntimeState.captureStatus = "LENDO"
         RuntimeState.notifyChanged()
-        render(RuntimeState.snapshot())
 
-        // Esconde a própria bolha antes da captura para não encobrir números da oferta.
-        root?.visibility = View.INVISIBLE
-        handler.postDelayed({
-            if (projection == null || imageReader == null) {
-                root?.visibility = View.VISIBLE
-                RuntimeState.captureReady = false
-                RuntimeState.captureStatus = "ABRIR APP"
+        captureTimeout?.let { handler.removeCallbacks(it) }
+        val timeout = Runnable {
+            if (captureRequested && !processing.get()) {
+                captureRequested = false
+                RuntimeState.captureStatus = "TENTAR"
                 RuntimeState.notifyChanged()
-                render(RuntimeState.snapshot())
-                return@postDelayed
             }
-
-            captureRequested = true
-            captureTimeout?.let { handler.removeCallbacks(it) }
-            val timeout = Runnable {
-                if (captureRequested && !processing.get()) {
-                    captureRequested = false
-                    root?.visibility = View.VISIBLE
-                    RuntimeState.captureStatus = "TENTAR"
-                    RuntimeState.notifyChanged()
-                    render(RuntimeState.snapshot())
-                }
-            }
-            captureTimeout = timeout
-            handler.postDelayed(timeout, 1600L)
-        }, 100L)
-    }
-
-    private fun openMainForReactivation() {
-        // Não abre diretamente a tela de MediaProjection a partir do serviço em segundo plano.
-        // Em Androids recentes isso pode ser bloqueado. Abrimos a Activity principal; de lá o
-        // motorista toca em REATIVAR LEITURA e o pedido de consentimento é iniciado em primeiro plano.
-        runCatching {
-            startActivity(
-                Intent(this, MainActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            )
         }
-        Toast.makeText(this, "Reative a leitura no Corrida Ideal", Toast.LENGTH_SHORT).show()
+        captureTimeout = timeout
+        handler.postDelayed(timeout, 1800L)
     }
 
     private fun onImageAvailable(reader: ImageReader, width: Int, height: Int) {
@@ -225,16 +148,10 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
         }
 
         val image = reader.acquireLatestImage() ?: return
+        captureRequested = false
         captureTimeout?.let { handler.removeCallbacks(it) }
         captureTimeout = null
-        captureRequested = false
-        if (!firstFrameSeen) {
-            firstFrameSeen = true
-            if (RuntimeState.captureStatus == "ATIVADO — abra a Uber" || RuntimeState.captureStatus == "ABRA A UBER") {
-                RuntimeState.captureStatus = "PRONTO"
-                RuntimeState.notifyChanged()
-            }
-        }
+
         if (!processing.compareAndSet(false, true)) {
             image.close()
             return
@@ -257,10 +174,8 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
         } catch (t: Throwable) {
             runCatching { image.close() }
             processing.set(false)
-            root?.visibility = View.VISIBLE
             RuntimeState.captureStatus = "TENTE NOVAMENTE"
             RuntimeState.notifyChanged()
-            render(RuntimeState.snapshot())
         }
     }
 
@@ -308,142 +223,13 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
                 .addOnCompleteListener {
                     runCatching { bitmap.recycle() }
                     processing.set(false)
-                    root?.visibility = View.VISIBLE
-                    render(RuntimeState.snapshot())
                 }
         } catch (t: Throwable) {
             runCatching { bitmap.recycle() }
             processing.set(false)
-            root?.visibility = View.VISIBLE
             RuntimeState.captureStatus = "TENTE NOVAMENTE"
             RuntimeState.notifyChanged()
-            render(RuntimeState.snapshot())
         }
-    }
-
-    private fun ensureOverlayVisible() {
-        if (!Settings.canDrawOverlays(this)) {
-            RuntimeState.captureStatus = "Permita exibir sobre outros apps"
-            RuntimeState.notifyChanged()
-            return
-        }
-        if (root != null) {
-            root?.visibility = View.VISIBLE
-            render(RuntimeState.snapshot())
-            return
-        }
-
-        try {
-            windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-            val container = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-            }
-            val button = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER
-                setPadding(dp(13), 0, dp(15), 0)
-                background = rounded(Color.rgb(42, 92, 145), dp(30))
-            }
-            val icon = ImageView(this).apply {
-                setImageResource(R.drawable.ic_status_car)
-                setColorFilter(Color.WHITE)
-            }
-            val text = TextView(this).apply {
-                this.text = "ANALISAR"
-                textSize = 15f
-                setTextColor(Color.WHITE)
-                setTypeface(typeface, android.graphics.Typeface.BOLD)
-                gravity = Gravity.CENTER
-            }
-            button.addView(icon, LinearLayout.LayoutParams(dp(30), dp(30)).apply { rightMargin = dp(7) })
-            button.addView(text, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT))
-            container.addView(button, LinearLayout.LayoutParams(dp(160), dp(60)))
-
-            val lp = WindowManager.LayoutParams(
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                PixelFormat.TRANSLUCENT
-            ).apply {
-                gravity = Gravity.TOP or Gravity.END
-                x = dp(10)
-                y = dp(170)
-            }
-
-            root = container
-            pill = button
-            label = text
-            params = lp
-            installDragAndTap(button)
-            windowManager?.addView(container, lp)
-            render(RuntimeState.snapshot())
-        } catch (t: Throwable) {
-            root = null
-            pill = null
-            label = null
-            params = null
-            RuntimeState.captureStatus = "Falha ao mostrar bolha"
-            RuntimeState.notifyChanged()
-        }
-    }
-
-    private fun installDragAndTap(target: View) {
-        target.setOnTouchListener(object : View.OnTouchListener {
-            var startX = 0
-            var startY = 0
-            var downX = 0f
-            var downY = 0f
-            var moved = false
-
-            override fun onTouch(v: View?, event: MotionEvent): Boolean {
-                val p = params ?: return false
-                when (event.action) {
-                    MotionEvent.ACTION_DOWN -> {
-                        startX = p.x
-                        startY = p.y
-                        downX = event.rawX
-                        downY = event.rawY
-                        moved = false
-                        return true
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        val dx = event.rawX - downX
-                        val dy = event.rawY - downY
-                        if (abs(dx) > dp(7) || abs(dy) > dp(7)) moved = true
-                        if (moved) {
-                            p.x = startX - dx.toInt()
-                            p.y = startY + dy.toInt()
-                            runCatching { windowManager?.updateViewLayout(root, p) }
-                        }
-                        return true
-                    }
-                    MotionEvent.ACTION_UP -> {
-                        if (!moved) requestCapture()
-                        return true
-                    }
-                }
-                return false
-            }
-        })
-    }
-
-    private fun render(s: LiveSnapshot) {
-        val l = label ?: return
-        val b = pill ?: return
-        val (text, color) = when {
-            !s.captureReady || s.captureStatus == "ABRIR APP" -> "REATIVAR" to Color.rgb(95, 95, 95)
-            s.captureStatus == "LENDO" -> "LENDO…" to Color.rgb(42, 92, 145)
-            s.captureStatus == "BOA" -> "BOA" to Color.rgb(22, 155, 75)
-            s.captureStatus == "RAZOÁVEL" -> "RAZOÁVEL" to Color.rgb(203, 151, 20)
-            s.captureStatus == "RUIM" -> "RUIM" to Color.rgb(194, 55, 55)
-            s.captureStatus == "NÃO LEU" || s.captureStatus == "TENTE NOVAMENTE" || s.captureStatus == "TENTAR" -> "TENTAR" to Color.rgb(120, 86, 32)
-            s.captureStatus == "ABRA A UBER" || s.captureStatus.startsWith("ATIVADO") -> "ANALISAR" to Color.rgb(42, 92, 145)
-            else -> "ANALISAR" to Color.rgb(42, 92, 145)
-        }
-        l.text = text
-        b.background = rounded(color, dp(30))
     }
 
     private fun speakGrade(grade: RideGrade) = speak(when (grade) {
@@ -480,7 +266,7 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
         val notification = Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_status_car)
             .setContentTitle("Corrida Ideal — turno ativo")
-            .setContentText("Bolha pronta para analisar ofertas")
+            .setContentText("Leitura pronta; use a bolha sobre a Uber")
             .setContentIntent(open)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Encerrar turno", stop)
             .setOngoing(true)
@@ -488,9 +274,7 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
 
         if (Build.VERSION.SDK_INT >= 29) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
+        } else startForeground(NOTIFICATION_ID, notification)
     }
 
     private fun createChannel() {
@@ -507,16 +291,13 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
         return if (Build.VERSION.SDK_INT >= 30) {
             val bounds = wm.currentWindowMetrics.bounds
             Triple(bounds.width(), bounds.height(), metrics.densityDpi)
-        } else {
-            Triple(metrics.widthPixels, metrics.heightPixels, metrics.densityDpi)
-        }
+        } else Triple(metrics.widthPixels, metrics.heightPixels, metrics.densityDpi)
     }
 
     private fun failSession(message: String) {
         RuntimeState.captureReady = false
         RuntimeState.captureStatus = message
         RuntimeState.notifyChanged()
-        render(RuntimeState.snapshot())
     }
 
     private fun cleanupProjection(callStop: Boolean = true) {
@@ -530,32 +311,14 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
         if (callStop) runCatching { p?.stop() }
     }
 
-    private fun removeOverlay() {
-        val r = root
-        if (r != null) runCatching { windowManager?.removeView(r) }
-        root = null
-        pill = null
-        label = null
-        params = null
-    }
-
-    private fun rounded(color: Int, radius: Int) = GradientDrawable().apply {
-        setColor(color)
-        cornerRadius = radius.toFloat()
-        setStroke(dp(2), Color.argb(135, 255, 255, 255))
-    }
-
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).roundToInt()
-
     override fun onDestroy() {
         captureTimeout?.let { handler.removeCallbacks(it) }
         captureTimeout = null
-        RuntimeState.removeListener(stateListener)
         RuntimeState.captureReady = false
         RuntimeState.captureStatus = "Leitura desligada"
         RuntimeState.notifyChanged()
         cleanupProjection(callStop = true)
-        removeOverlay()
+        stopService(Intent(this, OverlayService::class.java))
         runCatching { recognizer.close() }
         tts?.stop()
         tts?.shutdown()
@@ -565,12 +328,10 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
     companion object {
         const val ACTION_START = "com.yuri.corridaideal.SCREEN_START"
         const val ACTION_CAPTURE_ONCE = "com.yuri.corridaideal.SCREEN_CAPTURE_ONCE"
-        const val ACTION_SHOW_BUBBLE = "com.yuri.corridaideal.SCREEN_SHOW_BUBBLE"
-        const val ACTION_HIDE_BUBBLE = "com.yuri.corridaideal.SCREEN_HIDE_BUBBLE"
         const val ACTION_STOP = "com.yuri.corridaideal.SCREEN_STOP"
         const val EXTRA_RESULT_CODE = "resultCode"
         const val EXTRA_RESULT_DATA = "resultData"
-        const val CHANNEL_ID = "corrida_ideal_v055"
+        const val CHANNEL_ID = "corrida_ideal_v056"
         const val NOTIFICATION_ID = 45
     }
 }

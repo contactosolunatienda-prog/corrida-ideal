@@ -1,6 +1,6 @@
 package com.yuri.corridaideal
 
-import android.app.*
+import android.app.Service
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
@@ -20,13 +20,16 @@ import android.widget.TextView
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
+/**
+ * v0.5.6: bolha separada da captura, como na arquitetura estável inicial.
+ * O processo continua mantido vivo pelo ScreenCaptureService (mediaProjection FGS),
+ * enquanto este serviço cuida apenas da UI flutuante.
+ */
 class OverlayService : Service() {
     private lateinit var windowManager: WindowManager
     private lateinit var root: LinearLayout
     private lateinit var pill: LinearLayout
-    private lateinit var icon: ImageView
     private lateinit var label: TextView
-    private lateinit var close: TextView
     private lateinit var params: WindowManager.LayoutParams
     private val handler = Handler(Looper.getMainLooper())
 
@@ -34,16 +37,24 @@ class OverlayService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        createChannel()
-        promoteForeground()
-        if (!Settings.canDrawOverlays(this)) { stopSelf(); return }
+        if (!Settings.canDrawOverlays(this)) {
+            stopSelf()
+            return
+        }
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         createOverlay()
         RuntimeState.addListener(stateListener)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_NOT_STICKY
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (::root.isInitialized) {
+            if (root.visibility != View.VISIBLE) root.visibility = View.VISIBLE
+            render(RuntimeState.snapshot())
+        }
+        return START_NOT_STICKY
+    }
 
     private fun createOverlay() {
         root = LinearLayout(this).apply {
@@ -54,10 +65,11 @@ class OverlayService : Service() {
         pill = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(dp(12), 0, dp(14), 0)
-            background = rounded(Color.rgb(42, 92, 145), dp(28))
+            setPadding(dp(13), 0, dp(15), 0)
+            background = rounded(Color.rgb(42, 92, 145), dp(30))
         }
-        icon = ImageView(this).apply {
+
+        val icon = ImageView(this).apply {
             setImageResource(R.drawable.ic_status_car)
             setColorFilter(Color.WHITE)
         }
@@ -68,31 +80,21 @@ class OverlayService : Service() {
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             gravity = Gravity.CENTER
         }
-        pill.addView(icon, LinearLayout.LayoutParams(dp(28), dp(28)).apply { rightMargin = dp(6) })
+        pill.addView(icon, LinearLayout.LayoutParams(dp(30), dp(30)).apply { rightMargin = dp(7) })
         pill.addView(label, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT))
-
-        close = TextView(this).apply {
-            text = "×"
-            textSize = 20f
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            background = rounded(Color.argb(230, 45, 45, 45), dp(18))
-            setOnClickListener { stopSelf() }
-            contentDescription = "Esconder bolha"
-        }
-
-        root.addView(pill, LinearLayout.LayoutParams(dp(145), dp(56)))
-        root.addView(close, LinearLayout.LayoutParams(dp(38), dp(38)).apply { leftMargin = dp(6) })
+        root.addView(pill, LinearLayout.LayoutParams(dp(160), dp(60)))
 
         params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else WindowManager.LayoutParams.TYPE_PHONE,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.END
-            x = dp(10); y = dp(170)
+            x = dp(10)
+            y = dp(170)
         }
 
         installDragAndTap()
@@ -102,21 +104,29 @@ class OverlayService : Service() {
 
     private fun installDragAndTap() {
         pill.setOnTouchListener(object : View.OnTouchListener {
-            var startX = 0; var startY = 0
-            var downX = 0f; var downY = 0f
+            var startX = 0
+            var startY = 0
+            var downX = 0f
+            var downY = 0f
             var moved = false
+
             override fun onTouch(v: View?, event: MotionEvent): Boolean {
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
-                        startX = params.x; startY = params.y
-                        downX = event.rawX; downY = event.rawY; moved = false
+                        startX = params.x
+                        startY = params.y
+                        downX = event.rawX
+                        downY = event.rawY
+                        moved = false
                         return true
                     }
                     MotionEvent.ACTION_MOVE -> {
-                        val dx = event.rawX - downX; val dy = event.rawY - downY
+                        val dx = event.rawX - downX
+                        val dy = event.rawY - downY
                         if (abs(dx) > dp(7) || abs(dy) > dp(7)) moved = true
                         if (moved) {
-                            params.x = startX - dx.toInt(); params.y = startY + dy.toInt()
+                            params.x = startX - dx.toInt()
+                            params.y = startY + dy.toInt()
                             runCatching { windowManager.updateViewLayout(root, params) }
                         }
                         return true
@@ -133,14 +143,13 @@ class OverlayService : Service() {
 
     private fun requestCapture() {
         if (!RuntimeState.captureReady) {
-            label.text = "ATIVAR NO APP"
-            pill.background = rounded(Color.rgb(90, 90, 90), dp(28))
+            label.text = "REATIVAR"
+            pill.background = rounded(Color.rgb(95, 95, 95), dp(30))
             return
         }
+
         label.text = "LENDO…"
-        pill.background = rounded(Color.rgb(42, 92, 145), dp(28))
-        // Some Uber offer fields can sit under the floating pill. Hide it for a
-        // fraction of a second so the screenshot contains only the underlying app.
+        pill.background = rounded(Color.rgb(42, 92, 145), dp(30))
         root.visibility = View.INVISIBLE
         handler.postDelayed({
             startService(Intent(this, ScreenCaptureService::class.java).setAction(ScreenCaptureService.ACTION_CAPTURE_ONCE))
@@ -149,46 +158,23 @@ class OverlayService : Service() {
     }
 
     private fun render(s: LiveSnapshot) {
-        val grade = s.analysis?.grade
-        val statusIsGrade = s.captureStatus == "BOA" || s.captureStatus == "RAZOÁVEL" || s.captureStatus == "RUIM"
-        if (!s.captureReady) {
-            label.text = "ATIVAR NO APP"
-            pill.background = rounded(Color.rgb(90, 90, 90), dp(28))
-            return
+        val (text, color) = when {
+            !s.captureReady -> "REATIVAR" to Color.rgb(95, 95, 95)
+            s.captureStatus == "LENDO" -> "LENDO…" to Color.rgb(42, 92, 145)
+            s.captureStatus == "BOA" -> "BOA" to Color.rgb(22, 155, 75)
+            s.captureStatus == "RAZOÁVEL" -> "RAZOÁVEL" to Color.rgb(203, 151, 20)
+            s.captureStatus == "RUIM" -> "RUIM" to Color.rgb(194, 55, 55)
+            s.captureStatus == "NÃO LEU" || s.captureStatus == "TENTAR" || s.captureStatus == "TENTE NOVAMENTE" -> "TENTAR" to Color.rgb(120, 86, 32)
+            else -> "ANALISAR" to Color.rgb(42, 92, 145)
         }
-        if (!statusIsGrade) {
-            label.text = if (s.captureStatus.startsWith("Lendo")) "LENDO…" else "ANALISAR"
-            pill.background = rounded(Color.rgb(42, 92, 145), dp(28))
-            return
-        }
-        when (grade) {
-            RideGrade.GREEN -> { label.text = "BOA"; pill.background = rounded(Color.rgb(22, 155, 75), dp(28)) }
-            RideGrade.YELLOW -> { label.text = "RAZOÁVEL"; pill.background = rounded(Color.rgb(203, 151, 20), dp(28)) }
-            RideGrade.RED -> { label.text = "RUIM"; pill.background = rounded(Color.rgb(194, 55, 55), dp(28)) }
-            null -> { label.text = "ANALISAR"; pill.background = rounded(Color.rgb(42, 92, 145), dp(28)) }
-        }
+        label.text = text
+        pill.background = rounded(color, dp(30))
     }
 
     private fun rounded(color: Int, radius: Int) = GradientDrawable().apply {
-        setColor(color); cornerRadius = radius.toFloat(); setStroke(dp(2), Color.argb(130, 255, 255, 255))
-    }
-
-    private fun createChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            getSystemService(NotificationManager::class.java).createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Bolha Corrida Ideal", NotificationManager.IMPORTANCE_LOW)
-            )
-        }
-    }
-
-    private fun promoteForeground() {
-        val notification = Notification.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_status_car)
-            .setContentTitle("Corrida Ideal ativo")
-            .setContentText("Bolha pronta para analisar ofertas")
-            .setOngoing(true)
-            .build()
-        startForeground(NOTIFICATION_ID, notification)
+        setColor(color)
+        cornerRadius = radius.toFloat()
+        setStroke(dp(2), Color.argb(135, 255, 255, 255))
     }
 
     override fun onDestroy() {
@@ -197,10 +183,5 @@ class OverlayService : Service() {
         super.onDestroy()
     }
 
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).roundToInt()
-
-    companion object {
-        const val CHANNEL_ID = "corrida_ideal_overlay_v052"
-        const val NOTIFICATION_ID = 44
-    }
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).roundToInt()
 }

@@ -35,6 +35,10 @@
         </activity>
 
         <service
+            android:name=".OverlayService"
+            android:exported="false" />
+
+        <service
             android:name=".ScreenCaptureService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />

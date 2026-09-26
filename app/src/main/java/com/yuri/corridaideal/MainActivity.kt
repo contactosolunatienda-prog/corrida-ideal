@@ -96,7 +96,7 @@ class MainActivity : Activity() {
         }
         // Se o turno ainda está ativo, apenas manda o próprio serviço de captura mostrar a bolha.
         if (RuntimeState.captureReady && Settings.canDrawOverlays(this)) {
-            startService(Intent(this, ScreenCaptureService::class.java).setAction(ScreenCaptureService.ACTION_SHOW_BUBBLE))
+            startService(Intent(this, OverlayService::class.java))
         }
     }
 
@@ -119,14 +119,14 @@ class MainActivity : Activity() {
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         })
         root.addView(TextView(this).apply {
-            text = "v0.5.5 — revisão de estabilidade baseada no fluxo que já funcionava."
+            text = "v0.5.6 — núcleo de captura restaurado da versão que funcionava."
             textSize = 14f
             setPadding(0, dp(4), 0, dp(12))
         })
 
         root.addView(section("USO NA RUA"))
         root.addView(TextView(this).apply {
-            text = "Antes de ficar online: toque INICIAR TURNO. No aviso do Android, escolha UM ÚNICO APP e selecione UBER. Aguarde a ativação terminar. Depois abra a Uber e use a bolha ANALISAR: BOA, RAZOÁVEL ou RUIM. Se aparecer REATIVAR, toque na bolha para voltar ao Corrida Ideal e toque REATIVAR LEITURA."
+            text = "Antes de ficar online: toque INICIAR TURNO e autorize a captura. Depois abra a Uber normalmente. A captura roda em um serviço separado da bolha, como na versão inicial que já funcionou neste aparelho. Quando surgir uma oferta, toque em ANALISAR: BOA, RAZOÁVEL ou RUIM."
             textSize = 13f
             setPadding(0, 0, 0, dp(8))
         })
@@ -135,7 +135,7 @@ class MainActivity : Activity() {
             text = "INICIAR TURNO"
             setOnClickListener {
                 if (RuntimeState.captureReady) {
-                    startService(Intent(this@MainActivity, ScreenCaptureService::class.java).setAction(ScreenCaptureService.ACTION_SHOW_BUBBLE))
+                    startService(Intent(this@MainActivity, OverlayService::class.java))
                     Toast.makeText(this@MainActivity, "Bolha mostrada.", Toast.LENGTH_SHORT).show()
                 } else startShift()
             }
@@ -248,11 +248,12 @@ class MainActivity : Activity() {
         if (!RuntimeState.captureReady) {
             startActivity(Intent(this, CapturePermissionActivity::class.java))
         } else {
-            startService(Intent(this, ScreenCaptureService::class.java).setAction(ScreenCaptureService.ACTION_SHOW_BUBBLE))
+            startService(Intent(this, OverlayService::class.java))
         }
     }
 
     private fun stopShift() {
+        stopService(Intent(this, OverlayService::class.java))
         stopService(Intent(this, ScreenCaptureService::class.java).setAction(ScreenCaptureService.ACTION_STOP))
         RuntimeState.captureReady = false
         RuntimeState.captureStatus = "Leitura de tela desligada"

@@ -45,3 +45,7 @@ No Android 14+ escolha **Um único app > Uber** no consentimento de captura. O m
 ## v0.5.5 — estabilidade antes de novos recursos
 
 A v0.5.5 volta ao caminho de autorização padrão do Android, não abre a Uber automaticamente e adiciona timeout para impedir que a bolha fique presa em LENDO. Consulte `VERSAO_0_5_5.md`.
+
+## v0.5.6 — núcleo estável restaurado
+
+A v0.5.6 volta à arquitetura de dois serviços da versão 0.2, que já funcionou no aparelho de teste. A captura MediaProjection fica isolada no serviço em primeiro plano e a bolha fica em um serviço separado. Não há Acessibilidade, não há OCR contínuo e não há abertura automática da Uber.
