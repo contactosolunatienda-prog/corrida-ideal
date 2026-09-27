@@ -61,3 +61,13 @@ A infraestrutura de relatório das versões anteriores foi mantida para registra
 
 ## v1.0.1 — correção de build
 Se o projeto foi atualizado sobre versões antigas pelo botão **Upload files** do GitHub, arquivos que não existem no ZIP novo podem permanecer no repositório. A v0.6.0 deixou `app/src/main/res/xml/accessibility_service_config.xml`; a v1.0.1 sobrescreve esse arquivo com um recurso inerte e válido para impedir falha do AAPT. Nenhum AccessibilityService é registrado no Manifest.
+
+
+## v1.0.2 — ativação de captura reforçada
+
+- mantém a Activity de consentimento viva até o serviço MediaProjection realmente ficar pronto;
+- volta automaticamente para a Uber somente depois de `captureReady=true`;
+- exibe falha de ativação no painel em vez de ficar silenciosamente preso em `ATIVAR LEITURA`;
+- protege a nova sessão contra callbacks atrasados de sessões anteriores;
+- painel pode ser minimizado com `—` e encerrado com `×`;
+- continua sem AccessibilityService e mantém a meta de R$ 1,25/km após gasolina.

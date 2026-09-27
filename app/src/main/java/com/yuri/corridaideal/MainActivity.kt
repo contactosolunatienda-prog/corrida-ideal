@@ -105,7 +105,7 @@ class MainActivity : Activity() {
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         })
         root.addView(TextView(this).apply {
-            text = "v1.0.0 — reconstruído sobre o motor de captura que funcionou na v0.2"
+            text = "v1.0.2 — captura reforçada para Android 15"
             textSize = 14f
             setPadding(0, dp(4), 0, dp(12))
         })

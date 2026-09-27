@@ -21,19 +21,22 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * Painel flutuante v1.0.0.
+ * Painel flutuante v1.0.2.
  *
- * Mantém o painel separado do MediaProjection, como na v0.2 que funcionou.
- * A captura só é solicitada quando o motorista toca ANALISAR.
+ * Mantém a janela aberta como o usuário preferiu, mas agora ela pode ser
+ * minimizada ou encerrada. A leitura permanece em serviço separado.
  */
 class OverlayService : Service() {
     private var windowManager: WindowManager? = null
     private var root: LinearLayout? = null
+    private var body: LinearLayout? = null
     private var header: TextView? = null
+    private var minimizeButton: TextView? = null
     private var action: TextView? = null
     private var detail: TextView? = null
     private var params: WindowManager.LayoutParams? = null
     private val handler = Handler(Looper.getMainLooper())
+    private var minimized = false
 
     private val stateListener: (LiveSnapshot) -> Unit = { snap -> handler.post { render(snap) } }
 
@@ -54,7 +57,7 @@ class OverlayService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
-                stopSelf()
+                stopCaptureAndPanel()
                 return START_NOT_STICKY
             }
             ACTION_SHOW -> root?.visibility = View.VISIBLE
@@ -68,8 +71,13 @@ class OverlayService : Service() {
 
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(10), dp(8), dp(10), dp(10))
+            setPadding(dp(8), dp(7), dp(8), dp(8))
             background = rounded(Color.argb(242, 25, 25, 25), dp(18), Color.argb(130, 255, 255, 255))
+        }
+
+        val headerRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
         }
 
         val title = TextView(this).apply {
@@ -78,7 +86,33 @@ class OverlayService : Service() {
             setTextColor(Color.WHITE)
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(8), dp(5), dp(8), dp(5))
+            setPadding(dp(8), 0, dp(4), 0)
+        }
+
+        val minimize = TextView(this).apply {
+            text = "—"
+            textSize = 20f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setOnClickListener { toggleMinimized() }
+            contentDescription = "Minimizar painel"
+        }
+
+        val close = TextView(this).apply {
+            text = "×"
+            textSize = 24f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setOnClickListener { stopCaptureAndPanel() }
+            contentDescription = "Encerrar Corrida Ideal"
+        }
+
+        headerRow.addView(title, LinearLayout.LayoutParams(0, dp(38), 1f))
+        headerRow.addView(minimize, LinearLayout.LayoutParams(dp(42), dp(38)))
+        headerRow.addView(close, LinearLayout.LayoutParams(dp(42), dp(38)))
+
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
         }
 
         val button = TextView(this).apply {
@@ -97,12 +131,14 @@ class OverlayService : Service() {
             textSize = 11f
             setTextColor(Color.LTGRAY)
             gravity = Gravity.CENTER
-            setPadding(dp(4), dp(6), dp(4), 0)
+            setPadding(dp(4), dp(6), dp(4), dp(2))
         }
 
-        container.addView(title, LinearLayout.LayoutParams(dp(270), dp(38)))
-        container.addView(button, LinearLayout.LayoutParams(dp(270), dp(62)))
-        container.addView(info, LinearLayout.LayoutParams(dp(270), dp(38)))
+        content.addView(button, LinearLayout.LayoutParams(dp(290), dp(62)))
+        content.addView(info, LinearLayout.LayoutParams(dp(290), dp(40)))
+
+        container.addView(headerRow, LinearLayout.LayoutParams(dp(290), dp(38)))
+        container.addView(content)
 
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -119,7 +155,9 @@ class OverlayService : Service() {
         }
 
         root = container
+        body = content
         header = title
+        minimizeButton = minimize
         action = button
         detail = info
         params = lp
@@ -165,6 +203,20 @@ class OverlayService : Service() {
         })
     }
 
+    private fun toggleMinimized() {
+        minimized = !minimized
+        body?.visibility = if (minimized) View.GONE else View.VISIBLE
+        minimizeButton?.text = if (minimized) "+" else "—"
+        runCatching { params?.let { windowManager?.updateViewLayout(root, it) } }
+    }
+
+    private fun stopCaptureAndPanel() {
+        runCatching {
+            startService(Intent(this, ScreenCaptureService::class.java).setAction(ScreenCaptureService.ACTION_STOP))
+        }
+        stopSelf()
+    }
+
     private fun onMainAction() {
         if (!RuntimeState.captureReady) {
             RuntimeState.captureStatus = "PEDINDO AUTORIZAÇÃO"
@@ -176,20 +228,19 @@ class OverlayService : Service() {
             return
         }
 
-        val current = RuntimeState.captureStatus
-        if (current == "LENDO") return
+        if (RuntimeState.captureStatus == "LENDO") return
 
         RuntimeState.captureStatus = "LENDO"
         RuntimeState.notifyChanged()
 
-        // Esconde o painel para não cobrir os números da oferta na captura.
+        // Esconde o painel durante a foto para não cobrir os números da Uber.
         root?.visibility = View.INVISIBLE
         handler.postDelayed({
             val i = Intent(this, ScreenCaptureService::class.java)
                 .setAction(ScreenCaptureService.ACTION_CAPTURE_ONCE)
             startService(i)
-            handler.postDelayed({ root?.visibility = View.VISIBLE }, 850L)
-        }, 90L)
+            handler.postDelayed({ root?.visibility = View.VISIBLE }, 900L)
+        }, 100L)
     }
 
     private fun render(s: LiveSnapshot) {
@@ -197,9 +248,14 @@ class OverlayService : Service() {
         val info = detail ?: return
 
         if (!s.captureReady) {
-            button.text = "ATIVAR LEITURA"
+            button.text = if (s.captureStatus == "INICIANDO LEITURA") "INICIANDO…" else "ATIVAR LEITURA"
             button.background = rounded(Color.rgb(70, 90, 115), dp(14), Color.argb(150, 255, 255, 255))
-            info.text = "Faça isso já com a Uber aberta. Depois só ANALISAR."
+            info.text = when {
+                s.captureStatus.startsWith("FALHA") -> s.captureStatus
+                s.captureStatus == "INICIANDO LEITURA" -> "Aguarde; vou voltar para a Uber quando ficar pronta."
+                s.captureStatus == "Leitura encerrada pelo Android" -> "A leitura foi encerrada. Toque para autorizar novamente."
+                else -> "Faça isso já com a Uber aberta. Depois só ANALISAR."
+            }
             return
         }
 
@@ -285,9 +341,11 @@ class OverlayService : Service() {
         RuntimeState.removeListener(stateListener)
         root?.let { runCatching { windowManager?.removeView(it) } }
         root = null
+        body = null
         action = null
         detail = null
         header = null
+        minimizeButton = null
         super.onDestroy()
     }
 
@@ -296,7 +354,7 @@ class OverlayService : Service() {
     companion object {
         const val ACTION_STOP = "com.yuri.corridaideal.OVERLAY_STOP"
         const val ACTION_SHOW = "com.yuri.corridaideal.OVERLAY_SHOW"
-        const val CHANNEL_ID = "corrida_ideal_panel_v1"
+        const val CHANNEL_ID = "corrida_ideal_panel_v102"
         const val NOTIFICATION_ID = 44
     }
 }

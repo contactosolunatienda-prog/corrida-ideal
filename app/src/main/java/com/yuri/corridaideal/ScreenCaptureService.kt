@@ -24,10 +24,11 @@ import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Núcleo de captura v1.0.0.
+ * Núcleo de captura v1.0.2.
  *
- * Baseado no fluxo da v0.2: serviço de MediaProjection separado do painel.
- * Não há captura automática, não há AccessibilityService e não há troca automática de app.
+ * Continua com a arquitetura separada que funcionou na v0.2, mas agora protege
+ * contra callbacks atrasados de uma sessão anterior derrubarem a sessão nova e
+ * deixa o estado de falha visível no painel.
  */
 class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
     private var projection: MediaProjection? = null
@@ -37,6 +38,7 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
     private val processing = AtomicBoolean(false)
     @Volatile private var captureRequested = false
     private var captureTimeout: Runnable? = null
+    private var projectionGeneration = 0
 
     private var tts: TextToSpeech? = null
     private var ttsReady = false
@@ -71,14 +73,24 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
         } else intent.getParcelableExtra(EXTRA_RESULT_DATA)
 
         if (resultCode != Activity.RESULT_OK || resultData == null) {
-            setNotReady("Leitura não autorizada")
+            setNotReady("FALHA: autorização inválida")
             return
         }
 
+        RuntimeState.captureReady = false
+        RuntimeState.captureStatus = "INICIANDO LEITURA"
+        RuntimeState.captureConfidence = 0
+        RuntimeState.notifyChanged()
+
         try {
-            // Android 14+: consentimento -> foreground service -> getMediaProjection.
+            // Ordem exigida pelo Android moderno: consentimento já concedido ->
+            // foreground service -> getMediaProjection -> um único VirtualDisplay.
             promoteForeground()
-            stopProjectionOnly(callStop = true)
+
+            // Invalida callbacks de uma sessão antiga antes de pará-la.
+            projectionGeneration += 1
+            releaseProjection(callStop = true)
+            val thisGeneration = projectionGeneration
 
             val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             val p = manager.getMediaProjection(resultCode, resultData)
@@ -86,11 +98,13 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
             p.registerCallback(object : MediaProjection.Callback() {
                 override fun onStop() {
                     handler.post {
+                        // Callback de sessão antiga não pode encerrar a sessão nova.
+                        if (thisGeneration != projectionGeneration) return@post
                         captureTimeout?.let { handler.removeCallbacks(it) }
                         captureTimeout = null
                         captureRequested = false
-                        stopProjectionOnly(callStop = false)
-                        setNotReady("Leitura encerrada")
+                        releaseProjection(callStop = false)
+                        setNotReady("Leitura encerrada pelo Android")
                         stopSelf()
                     }
                 }
@@ -99,7 +113,7 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
             val (width, height, density) = displayInfo()
             imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3)
             virtualDisplay = p.createVirtualDisplay(
-                "CorridaIdealV1",
+                "CorridaIdealV102",
                 width, height, density,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                 imageReader!!.surface,
@@ -115,8 +129,12 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
             RuntimeState.captureConfidence = 0
             RuntimeState.captureStatus = "PRONTO"
             RuntimeState.notifyChanged()
-        } catch (_: Throwable) {
-            setNotReady("Leitura não iniciou")
+        } catch (t: Throwable) {
+            projectionGeneration += 1
+            releaseProjection(callStop = true)
+            setNotReady("FALHA: ${t.javaClass.simpleName}")
+            runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+            stopSelf()
         }
     }
 
@@ -141,7 +159,7 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
             }
         }
         captureTimeout = timeout
-        handler.postDelayed(timeout, 1600L)
+        handler.postDelayed(timeout, 1800L)
     }
 
     private fun onImageAvailable(reader: ImageReader, width: Int, height: Int) {
@@ -313,23 +331,24 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun stopProjectionOnly(callStop: Boolean) {
+    private fun releaseProjection(callStop: Boolean) {
         imageReader?.setOnImageAvailableListener(null, null)
         runCatching { virtualDisplay?.release() }
         runCatching { imageReader?.close() }
-        val p = projection
+        val oldProjection = projection
         virtualDisplay = null
         imageReader = null
         projection = null
-        if (callStop) runCatching { p?.stop() }
+        if (callStop) runCatching { oldProjection?.stop() }
     }
 
     override fun onDestroy() {
         captureTimeout?.let { handler.removeCallbacks(it) }
         captureTimeout = null
         captureRequested = false
+        projectionGeneration += 1
+        releaseProjection(callStop = true)
         setNotReady("Leitura desligada")
-        stopProjectionOnly(callStop = true)
         runCatching { recognizer.close() }
         tts?.stop()
         tts?.shutdown()
@@ -342,7 +361,7 @@ class ScreenCaptureService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_STOP = "com.yuri.corridaideal.SCREEN_STOP"
         const val EXTRA_RESULT_CODE = "resultCode"
         const val EXTRA_RESULT_DATA = "resultData"
-        const val CHANNEL_ID = "corrida_ideal_screen_v1"
+        const val CHANNEL_ID = "corrida_ideal_screen_v102"
         const val NOTIFICATION_ID = 45
     }
 }
