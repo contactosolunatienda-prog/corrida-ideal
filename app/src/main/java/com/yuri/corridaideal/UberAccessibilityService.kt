@@ -390,6 +390,18 @@ class UberAccessibilityService : AccessibilityService(), TextToSpeech.OnInitList
         b.background = rounded(color, dp(30))
     }
 
+    private fun dp(value: Int): Int {
+        return (value * resources.displayMetrics.density).roundToInt()
+    }
+
+    private fun rounded(color: Int, radiusDp: Int): GradientDrawable {
+        return GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            setColor(color)
+            cornerRadius = radiusDp * resources.displayMetrics.density
+        }
+    }
+
     private fun speakGrade(grade: RideGrade) = speak(
         when (grade) {
             RideGrade.GREEN -> "Corrida boa"
